@@ -325,6 +325,40 @@ body.video-playing .sidebar {
   font-size: 32px;
 }
 
+.favorite-button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.card:hover .favorite-button,
+.favorite-button.active,
+.favorite-button:focus-visible {
+  opacity: 1;
+}
+
+.favorite-button.active {
+  color: var(--accent);
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.favorite-button:hover {
+  background: rgba(0, 0, 0, 0.75);
+  transform: scale(1.08);
+}
+
 .card-body {
   padding: 10px 12px 14px;
 }

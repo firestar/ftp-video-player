@@ -64,6 +64,13 @@ export interface AnimeEntry {
   lastScannedAt?: number
 }
 
+export interface FavoriteFolder {
+  serverId: string
+  libraryRootId: string
+  path: string
+  addedAt: number
+}
+
 export interface StreamRequest {
   serverId: string
   path: string
@@ -184,4 +191,8 @@ export interface Api {
   setVideoProgress(progress: VideoProgress): void
   listUnfinishedVideos(): Promise<VideoProgress[]>
   listVideoProgress(): Promise<VideoProgress[]>
+
+  listFavoriteFolders(): Promise<FavoriteFolder[]>
+  addFavoriteFolder(input: FavoriteFolder): Promise<FavoriteFolder[]>
+  removeFavoriteFolder(serverId: string, path: string): Promise<FavoriteFolder[]>
 }

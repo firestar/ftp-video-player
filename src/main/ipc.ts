@@ -2,18 +2,22 @@ import { ipcMain } from 'electron'
 import type {
   AnimeMetadata,
   ConnectionTestResult,
+  FavoriteFolder,
   FtpServerConfig,
   LibraryRoot,
   RemoteEntry,
   VideoProgress
 } from '@shared/types'
 import {
+  addFavoriteFolder,
   addLibraryRoot,
   getServer,
   getVideoProgress,
+  listFavoriteFolders,
   listLibraryRoots,
   listServers,
   listVideoProgress,
+  removeFavoriteFolder,
   removeLibraryRoot,
   removeServer,
   setVideoProgress,
@@ -144,6 +148,14 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('progress:list', () => listVideoProgress())
+
+  ipcMain.handle('favorites:list', () => listFavoriteFolders())
+
+  ipcMain.handle('favorites:add', (_e, input: FavoriteFolder) => addFavoriteFolder(input))
+
+  ipcMain.handle('favorites:remove', (_e, serverId: string, path: string) =>
+    removeFavoriteFolder(serverId, path)
+  )
 
   ipcMain.handle('progress:listUnfinished', () => {
     return listVideoProgress()

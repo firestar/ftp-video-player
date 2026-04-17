@@ -4,6 +4,44 @@ import type { AnimeEntry, LibraryRoot, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
 import { formatWatchedTime } from './Anime'
 
+type SortKey = 'name' | 'rating' | 'year' | 'episodes' | 'watched' | 'added'
+type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
+  { key: 'name', label: 'Name' },
+  { key: 'rating', label: 'Rating' },
+  { key: 'year', label: 'Year' },
+  { key: 'episodes', label: 'Episodes' },
+  { key: 'watched', label: 'Recently watched' },
+  { key: 'added', label: 'Recently added' }
+]
+
+const DEFAULT_DIR: Record<SortKey, SortDir> = {
+  name: 'asc',
+  rating: 'desc',
+  year: 'desc',
+  episodes: 'desc',
+  watched: 'desc',
+  added: 'desc'
+}
+
+const SORT_STORAGE_KEY = 'library:sort'
+
+function loadSortPref(): { sortKey: SortKey; sortDir: SortDir } {
+  try {
+    const raw = localStorage.getItem(SORT_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { sortKey?: SortKey; sortDir?: SortDir }
+      if (parsed.sortKey && parsed.sortDir) {
+        return { sortKey: parsed.sortKey, sortDir: parsed.sortDir }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { sortKey: 'name', sortDir: 'asc' }
+}
+
 export default function Library(): JSX.Element {
   const [entriesById, setEntriesById] = useState<Record<string, AnimeEntry>>({})
   const [hasLoadedCache, setHasLoadedCache] = useState(false)
@@ -11,12 +49,28 @@ export default function Library(): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [unfinished, setUnfinished] = useState<VideoProgress[]>([])
+  const [allProgress, setAllProgress] = useState<VideoProgress[]>([])
+  const initialSort = loadSortPref()
+  const [sortKey, setSortKey] = useState<SortKey>(initialSort.sortKey)
+  const [sortDir, setSortDir] = useState<SortDir>(initialSort.sortDir)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify({ sortKey, sortDir }))
+    } catch {
+      // ignore
+    }
+  }, [sortKey, sortDir])
 
   async function refreshUnfinished(): Promise<void> {
     try {
-      const list = await api.listUnfinishedVideos()
-      setUnfinished(list)
+      const [unf, all] = await Promise.all([
+        api.listUnfinishedVideos(),
+        api.listVideoProgress()
+      ])
+      setUnfinished(unf)
+      setAllProgress(all)
     } catch (err) {
       console.error(err)
     }
@@ -75,13 +129,70 @@ export default function Library(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const latestWatchedByEntry = useMemo(() => {
+    // For each video path the user has opened, remember the most recent
+    // updatedAt. Then roll up per AnimeEntry by taking the max across its videos.
+    const byPath: Record<string, number> = {}
+    for (const p of allProgress) {
+      const key = `${p.serverId}::${p.path}`
+      const prev = byPath[key] ?? 0
+      if (p.updatedAt > prev) byPath[key] = p.updatedAt
+    }
+    const byEntry: Record<string, number> = {}
+    for (const entry of Object.values(entriesById)) {
+      let max = 0
+      for (const v of entry.videos) {
+        const t = byPath[`${entry.serverId}::${v.path}`] ?? 0
+        if (t > max) max = t
+      }
+      if (max > 0) byEntry[entry.id] = max
+    }
+    return byEntry
+  }, [allProgress, entriesById])
+
   const entries = useMemo(() => {
     const list = Object.values(entriesById)
-    list.sort((a, b) =>
+    const dir = sortDir === 'asc' ? 1 : -1
+    const byName = (a: AnimeEntry, b: AnimeEntry): number =>
       (a.metadata?.title ?? a.folderName).localeCompare(b.metadata?.title ?? b.folderName)
-    )
+    const compareNumeric = (
+      a: AnimeEntry,
+      b: AnimeEntry,
+      pick: (e: AnimeEntry) => number | undefined
+    ): number => {
+      const av = pick(a)
+      const bv = pick(b)
+      const ax = av ?? Number.NEGATIVE_INFINITY
+      const bx = bv ?? Number.NEGATIVE_INFINITY
+      if (ax === bx) return byName(a, b)
+      return ax < bx ? -1 : 1
+    }
+    list.sort((a, b) => {
+      let base: number
+      switch (sortKey) {
+        case 'rating':
+          base = compareNumeric(a, b, (e) => e.metadata?.score)
+          break
+        case 'year':
+          base = compareNumeric(a, b, (e) => e.metadata?.year)
+          break
+        case 'episodes':
+          base = compareNumeric(a, b, (e) => e.metadata?.episodes)
+          break
+        case 'watched':
+          base = compareNumeric(a, b, (e) => latestWatchedByEntry[e.id])
+          break
+        case 'added':
+          base = compareNumeric(a, b, (e) => e.lastScannedAt)
+          break
+        case 'name':
+        default:
+          return byName(a, b) * dir
+      }
+      return base * dir
+    })
     return list
-  }, [entriesById])
+  }, [entriesById, sortKey, sortDir, latestWatchedByEntry])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -107,7 +218,7 @@ export default function Library(): JSX.Element {
       <div className="library-main">
         <div className="page-header">
           <h1>Library</h1>
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <input
               placeholder="Search…"
               value={query}
@@ -122,6 +233,39 @@ export default function Library(): JSX.Element {
                 minWidth: 220
               }}
             />
+            <select
+              aria-label="Sort by"
+              value={sortKey}
+              onChange={(e) => {
+                const next = e.target.value as SortKey
+                setSortKey(next)
+                setSortDir(DEFAULT_DIR[next])
+              }}
+              style={{
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                padding: '8px 10px',
+                color: 'var(--text)',
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  Sort: {o.label}
+                </option>
+              ))}
+            </select>
+            <button
+              className="button secondary"
+              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+              aria-label={`Toggle sort direction (currently ${sortDir === 'asc' ? 'ascending' : 'descending'})`}
+              style={{ padding: '8px 12px' }}
+            >
+              {sortDir === 'asc' ? '↑' : '↓'}
+            </button>
             <button className="button secondary" onClick={refresh} disabled={loading}>
               {loading ? 'Scanning…' : 'Rescan'}
             </button>
@@ -394,6 +538,7 @@ function AnimeCard({ entry }: { entry: AnimeEntry }): JSX.Element {
         <div className="card-meta">
           {entry.metadata?.year ? `${entry.metadata.year} · ` : ''}
           {entry.metadata?.type ?? 'Folder'}
+          {entry.metadata?.score ? ` · ⭐ ${entry.metadata.score}` : ''}
         </div>
       </div>
     </div>

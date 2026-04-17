@@ -1,6 +1,13 @@
 import Store from 'electron-store'
 import { randomUUID } from 'node:crypto'
-import type { AnimeEntry, AnimeMetadata, FtpServerConfig, LibraryRoot, VideoFile } from '@shared/types'
+import type {
+  AnimeEntry,
+  AnimeMetadata,
+  FtpServerConfig,
+  LibraryRoot,
+  VideoFile,
+  VideoProgress
+} from '@shared/types'
 
 interface Schema {
   servers: FtpServerConfig[]
@@ -8,6 +15,7 @@ interface Schema {
   metadataByFolder: Record<string, AnimeMetadata>
   entriesByRoot: Record<string, AnimeEntry[]>
   videosByFolder: Record<string, VideoFile[]>
+  progressByVideo: Record<string, VideoProgress>
 }
 
 const store = new Store<Schema>({
@@ -17,7 +25,8 @@ const store = new Store<Schema>({
     libraryRoots: [],
     metadataByFolder: {},
     entriesByRoot: {},
-    videosByFolder: {}
+    videosByFolder: {},
+    progressByVideo: {}
   }
 })
 
@@ -129,4 +138,32 @@ export function setCachedVideos(folderKey: string, videos: VideoFile[]): void {
   const all = store.get('videosByFolder')
   all[folderKey] = videos
   store.set('videosByFolder', all)
+}
+
+// Progress is written ~100x/sec while a video plays, so we keep the full map
+// in memory and flush to disk on a debounce to avoid thrashing.
+const progressCache: Record<string, VideoProgress> = store.get('progressByVideo')
+let progressDirty = false
+
+function progressKey(serverId: string, remotePath: string): string {
+  return `${serverId}::${remotePath}`
+}
+
+export function getVideoProgress(serverId: string, remotePath: string): VideoProgress | undefined {
+  return progressCache[progressKey(serverId, remotePath)]
+}
+
+export function setVideoProgress(progress: VideoProgress): void {
+  progressCache[progressKey(progress.serverId, progress.path)] = progress
+  progressDirty = true
+}
+
+export function listVideoProgress(): VideoProgress[] {
+  return Object.values(progressCache)
+}
+
+export function flushVideoProgress(): void {
+  if (!progressDirty) return
+  store.set('progressByVideo', progressCache)
+  progressDirty = false
 }

@@ -30,10 +30,13 @@ export default function PlayerPage(): JSX.Element {
   const path = search.get('path') ?? ''
   const size = Number(search.get('size') ?? 0)
   const title = search.get('title') ?? path
+  const animeTitle = search.get('animeTitle') ?? title
+  const poster = search.get('poster') ?? undefined
 
   const containerRef = useRef<HTMLDivElement>(null)
   const videoElRef = useRef<HTMLVideoElement>(null)
   const playerRef = useRef<Player | null>(null)
+  const hasResumedRef = useRef(false)
 
   const [handle, setHandle] = useState<StreamHandle | null>(null)
   const [probe, setProbe] = useState<ProbeResult | null>(null)
@@ -134,13 +137,61 @@ export default function PlayerPage(): JSX.Element {
       vjsPlayer.on('pause', syncPlayingClass)
       vjsPlayer.on('ended', syncPlayingClass)
 
+      // On every `loadedmetadata` (initial load and mode switches), jump to the
+      // most recently saved position for this file. Skipped for videos watched
+      // past the 85% "finished" threshold so rewatches start from the top.
+      vjsPlayer.on('loadedmetadata', () => {
+        void (async () => {
+          try {
+            const saved = await api.getVideoProgress(serverId, path)
+            if (!saved) return
+            const duration = vjsPlayer.duration() ?? saved.durationSeconds
+            if (!duration || saved.positionSeconds < 1) return
+            const ratio = saved.positionSeconds / duration
+            if (hasResumedRef.current) {
+              // Mid-session src swap (e.g. direct → transcode): always restore.
+              vjsPlayer.currentTime(saved.positionSeconds)
+              return
+            }
+            if (ratio >= 0.85) return
+            vjsPlayer.currentTime(saved.positionSeconds)
+            hasResumedRef.current = true
+          } catch {
+            // ignore
+          }
+        })()
+      })
+
       playerRef.current = vjsPlayer
     }
 
     const player = playerRef.current
     player.src(currentSrc)
     player.play()?.catch(() => undefined)
-  }, [currentSrc, mode])
+
+    const progressInterval = window.setInterval(() => {
+      const p = playerRef.current
+      if (!p) return
+      const currentTime = p.currentTime() ?? 0
+      const duration = p.duration() ?? 0
+      if (!duration || currentTime < 0.1) return
+      api.setVideoProgress({
+        serverId,
+        path,
+        size,
+        positionSeconds: currentTime,
+        durationSeconds: duration,
+        updatedAt: Date.now(),
+        videoName: title,
+        animeTitle,
+        posterPath: poster
+      })
+    }, 10)
+
+    return () => {
+      window.clearInterval(progressInterval)
+    }
+  }, [currentSrc, mode, serverId, path, size, title, animeTitle, poster])
 
   // 3) Attach embedded subtitle tracks as remote <track>s.
   useEffect(() => {

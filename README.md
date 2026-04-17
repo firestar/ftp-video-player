@@ -76,12 +76,30 @@ The packaged `.app` lives in `dist/`.
 5. Click an anime for the detail view with video thumbnails, then **Play** to
    stream.
 
-## Notes on codecs
+## Player & codec support
 
-Electron's built-in Chromium only ships with patent-free codecs by default.
-MKV containers with H.264 + AAC tend to play; HEVC, AC3, and some other
-combinations may not. A transcode-on-the-fly pipeline could be added later by
-extending `stream-server.ts` to pipe through ffmpeg.
+Playback uses [Video.js](https://videojs.com/) as the frontend player and the
+local stream server in `src/main/stream-server.ts` exposes four HTTP
+endpoints per registered stream:
+
+- `/stream/:token` — raw byte-range passthrough from the FTP source.
+- `/probe/:token` — JSON from `ffprobe`: container, codecs, duration, and an
+  enumeration of embedded subtitle tracks.
+- `/transcode/:token[?seek=N]` — on-the-fly transcode to fragmented MP4
+  (H.264 + AAC, `yuv420p`) using `ffmpeg`, suitable for HEVC/H.265, AV1,
+  AC3/EAC3/DTS audio, and other codecs Chromium does not natively decode.
+- `/subtitle/:token/:streamIndex` — extracts an embedded subtitle track and
+  converts it to WebVTT so the browser can render it as a `<track>`.
+
+On open, the player probes the file and picks **Direct** when the codecs are
+Chromium-compatible (`h264`/`vp8`/`vp9`/`av1` + `aac`/`mp3`/`opus`/`vorbis`/
+`flac` in `mp4`/`m4v`/`webm`/`mkv`) or **Transcode** otherwise. A toolbar
+toggle lets the user switch manually. If direct playback errors on an
+unsupported codec mid-session, the player falls back to transcode
+automatically.
+
+Embedded subtitle tracks (SRT, ASS/SSA, PGS via `ffmpeg`'s WebVTT muxer) are
+exposed through the Video.js captions menu.
 
 ## Caches
 

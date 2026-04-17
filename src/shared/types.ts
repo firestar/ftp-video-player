@@ -71,8 +71,34 @@ export interface StreamRequest {
 }
 
 export interface StreamHandle {
-  url: string
   token: string
+  /** Raw byte-range stream URL (direct play when codec is browser-compatible). */
+  directUrl: string
+  /** On-the-fly transcoded fMP4 URL; accepts `?seek=<seconds>` and `?sub=<n>`. */
+  transcodeUrl: string
+  /** JSON probe endpoint: codecs, duration, subtitle list, directPlayable flag. */
+  probeUrl: string
+  /** Subtitle extractor base — append `/<streamIndex>` for a WebVTT track. */
+  subtitleUrl: string
+  /** @deprecated Alias of directUrl kept for older renderer code. */
+  url: string
+}
+
+export interface SubtitleTrackInfo {
+  index: number
+  codec: string
+  language?: string
+  title?: string
+  isDefault: boolean
+}
+
+export interface ProbeResult {
+  container?: string
+  duration?: number
+  videoCodec?: string
+  audioCodec?: string
+  subtitles: SubtitleTrackInfo[]
+  directPlayable: boolean
 }
 
 export interface ConnectionTestResult {

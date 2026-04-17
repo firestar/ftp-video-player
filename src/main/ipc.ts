@@ -16,7 +16,12 @@ import {
   upsertServer
 } from './store.js'
 import { createFtpClient } from './ftp/client.js'
-import { enrichWithMetadata, loadAnimeEntry, scanAllLibraries } from './library.js'
+import {
+  getCachedAnimeEntry,
+  getCachedLibrary,
+  loadAnimeEntry,
+  scanAllLibrariesStreaming
+} from './library.js'
 import { overrideMetadataForFolder, resolveMetadataForFolder, searchAnime } from './anime.js'
 import { generateThumbnail } from './thumbnail.js'
 import { registerStream, unregisterStream } from './stream-server.js'
@@ -67,15 +72,29 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('libraryRoots:remove', (_e, id: string) => removeLibraryRoot(id))
 
-  ipcMain.handle('library:scan', async () => {
-    const entries = await scanAllLibraries()
-    return enrichWithMetadata(entries)
+  ipcMain.handle('library:cached', () => getCachedLibrary())
+
+  ipcMain.handle('library:scan', async (event) => {
+    const sender = event.sender
+    try {
+      await scanAllLibrariesStreaming((entry) => {
+        if (!sender.isDestroyed()) sender.send('library:item', entry)
+      })
+    } finally {
+      if (!sender.isDestroyed()) sender.send('library:done')
+    }
   })
 
   ipcMain.handle(
     'library:loadAnime',
     async (_e, serverId: string, folderPath: string, libraryRootId: string) =>
       loadAnimeEntry(serverId, folderPath, libraryRootId)
+  )
+
+  ipcMain.handle(
+    'library:cachedAnime',
+    (_e, serverId: string, folderPath: string, libraryRootId: string) =>
+      getCachedAnimeEntry(serverId, folderPath, libraryRootId)
   )
 
   ipcMain.handle('anime:search', async (_e, query: string) => searchAnime(query))

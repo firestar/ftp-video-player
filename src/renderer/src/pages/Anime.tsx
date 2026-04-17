@@ -26,8 +26,14 @@ export default function Anime(): JSX.Element {
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
 
   async function load(): Promise<void> {
-    setEntry(null)
     setError(null)
+    try {
+      const cached = await api.cachedAnime(serverId, folderPath, libraryRootId)
+      if (cached) setEntry(cached)
+      else setEntry(null)
+    } catch {
+      // ignore — will be replaced by live load
+    }
     try {
       const loaded = await api.loadAnime(serverId, folderPath, libraryRootId)
       if (!loaded) throw new Error('Could not load anime')
@@ -39,6 +45,7 @@ export default function Anime(): JSX.Element {
 
   useEffect(() => {
     void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, folderPath, libraryRootId])
 
   useEffect(() => {

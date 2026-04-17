@@ -4,33 +4,66 @@ import type { AnimeEntry, LibraryRoot } from '@shared/types'
 import { api, localFileUrl } from '../api'
 
 export default function Library(): JSX.Element {
-  const [entries, setEntries] = useState<AnimeEntry[] | null>(null)
+  const [entriesById, setEntriesById] = useState<Record<string, AnimeEntry>>({})
+  const [hasLoadedCache, setHasLoadedCache] = useState(false)
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const navigate = useNavigate()
 
+  function upsertEntry(entry: AnimeEntry): void {
+    setEntriesById((prev) => ({ ...prev, [entry.id]: entry }))
+  }
+
   async function refresh(): Promise<void> {
+    if (loading) return
     setLoading(true)
     try {
-      const [scanned, libRoots] = await Promise.all([api.scanLibrary(), api.listLibraryRoots()])
-      scanned.sort((a, b) => (a.metadata?.title ?? a.folderName).localeCompare(b.metadata?.title ?? b.folderName))
-      setEntries(scanned)
-      setRoots(libRoots)
+      await api.scanLibrary()
     } catch (err) {
       console.error(err)
-      setEntries([])
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    void refresh()
+    const unsubItem = api.onLibraryItem(upsertEntry)
+    const unsubDone = api.onLibraryDone(() => setLoading(false))
+
+    void (async () => {
+      try {
+        const [cached, libRoots] = await Promise.all([api.cachedLibrary(), api.listLibraryRoots()])
+        setRoots(libRoots)
+        setEntriesById((prev) => {
+          const next = { ...prev }
+          for (const e of cached) next[e.id] = e
+          return next
+        })
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setHasLoadedCache(true)
+      }
+      void refresh()
+    })()
+
+    return () => {
+      unsubItem()
+      unsubDone()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const entries = useMemo(() => {
+    const list = Object.values(entriesById)
+    list.sort((a, b) =>
+      (a.metadata?.title ?? a.folderName).localeCompare(b.metadata?.title ?? b.folderName)
+    )
+    return list
+  }, [entriesById])
+
   const filtered = useMemo(() => {
-    if (!entries) return []
     const q = query.trim().toLowerCase()
     if (!q) return entries
     return entries.filter((e) => {
@@ -39,7 +72,7 @@ export default function Library(): JSX.Element {
     })
   }, [entries, query])
 
-  if (entries === null) {
+  if (!hasLoadedCache) {
     return (
       <div className="page">
         <div className="empty">Loading library…</div>
@@ -74,7 +107,7 @@ export default function Library(): JSX.Element {
         </div>
       </div>
 
-      {hasNoRoots && (
+      {hasNoRoots && entries.length === 0 && (
         <div className="empty">
           No library folders yet.{' '}
           <a onClick={() => navigate('/servers')}>Add a server</a> and point it at a folder like

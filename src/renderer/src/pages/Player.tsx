@@ -66,6 +66,10 @@ export default function PlayerPage(): JSX.Element {
   const [mode, setMode] = useState<PlaybackMode>('direct')
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(true)
+  // Blob URLs for prefetched WebVTT, keyed by ffprobe stream index. We fetch
+  // and buffer the whole VTT before attaching the <track> so Video.js can't
+  // silently drop a slow/failed HTTP track load.
+  const [subtitleBlobs, setSubtitleBlobs] = useState<Map<number, string>>(new Map())
   // Seconds of the source file the current transcode stream started at. When
   // the user seeks we bump this, which rebuilds the src with a new `?seek=`.
   const [transcodeStart, setTranscodeStart] = useState(0)
@@ -126,7 +130,7 @@ export default function PlayerPage(): JSX.Element {
   }, [mode, handle?.token])
 
   const currentSrc = useMemo(() => {
-    if (!handle) return null
+    if (!handle || !probe) return null
     if (mode === 'transcode') {
       const url =
         transcodeStart > 0
@@ -144,7 +148,7 @@ export default function PlayerPage(): JSX.Element {
             ? 'video/quicktime'
             : 'video/mp4'
     return { src: handle.directUrl, type: mime }
-  }, [handle, mode, path, transcodeStart])
+  }, [handle, mode, path, transcodeStart, probe])
 
   // 2) Create / update the Video.js player whenever the source changes.
   useEffect(() => {
@@ -299,7 +303,63 @@ export default function PlayerPage(): JSX.Element {
     }
   }, [currentSrc, mode, serverId, path, size, title, animeTitle, poster])
 
-  // 3) Attach embedded subtitle tracks as remote <track>s.
+  // 3a) Prefetch each text subtitle as WebVTT and expose it as a Blob URL.
+  // Doing the fetch ourselves (instead of letting Video.js's internal text
+  // track loader pull the HTTP URL) is the difference between captions
+  // rendering and silent failure: Video.js swallows XHR errors, and the
+  // /subtitle endpoint can take a while because ffmpeg has to stream the
+  // whole MKV over FTP before it emits any cues.
+  useEffect(() => {
+    if (!handle || !probe) return
+    const textTracks = probe.subtitles.filter((s) => s.textBased)
+    if (textTracks.length === 0) {
+      setSubtitleBlobs(new Map())
+      return
+    }
+
+    let cancelled = false
+    const created: string[] = []
+
+    ;(async () => {
+      const entries = await Promise.all(
+        textTracks.map(async (sub) => {
+          const url = `${handle.subtitleUrl}/${sub.index}`
+          try {
+            const res = await fetch(url)
+            if (!res.ok) {
+              const tail = (await res.text()).slice(0, 500)
+              console.error(`[subs] fetch ${sub.index} failed ${res.status}: ${tail}`)
+              return null
+            }
+            const text = await res.text()
+            const blob = new Blob([text], { type: 'text/vtt' })
+            const blobUrl = URL.createObjectURL(blob)
+            created.push(blobUrl)
+            return [sub.index, blobUrl] as const
+          } catch (err) {
+            console.error(`[subs] fetch ${sub.index} error`, err)
+            return null
+          }
+        })
+      )
+      if (cancelled) {
+        for (const u of created) URL.revokeObjectURL(u)
+        return
+      }
+      const next = new Map<number, string>()
+      for (const entry of entries) {
+        if (entry) next.set(entry[0], entry[1])
+      }
+      setSubtitleBlobs(next)
+    })()
+
+    return () => {
+      cancelled = true
+      for (const u of created) URL.revokeObjectURL(u)
+    }
+  }, [handle, probe])
+
+  // 3b) Attach the prefetched tracks to the player.
   useEffect(() => {
     const player = playerRef.current
     if (!player || !handle || !probe) return
@@ -314,7 +374,9 @@ export default function PlayerPage(): JSX.Element {
     // belong in the captions menu — they would attach as silent phantom tracks
     // and starve real text subs of the default-selection slot. Bitmap subs
     // require burn-in via the transcode endpoint instead.
-    const textTracks = probe.subtitles.filter((s) => s.textBased)
+    const textTracks = probe.subtitles.filter(
+      (s) => s.textBased && subtitleBlobs.has(s.index)
+    )
     if (textTracks.length === 0) return
 
     // Pick the track to show by default: the ffprobe-flagged default track,
@@ -324,16 +386,21 @@ export default function PlayerPage(): JSX.Element {
     const activeIndex = preferred >= 0 ? preferred : 0
 
     textTracks.forEach((sub, i) => {
+      const src = subtitleBlobs.get(sub.index)
+      if (!src) return
       const trackEl = player.addRemoteTextTrack(
         {
           kind: 'subtitles',
-          src: `${handle.subtitleUrl}/${sub.index}`,
+          src,
           srclang: languageFromTrack(sub),
           label: subtitleLabel(sub),
           default: i === activeIndex
         },
         false
       ) as unknown as HTMLTrackElement
+      trackEl?.addEventListener('error', (e) => {
+        console.error(`[subs] track load error idx=${sub.index}`, e)
+      })
       // `default: true` alone is unreliable once metadata has loaded; force
       // the mode so the active track actually renders over the video.
       const textTrack = trackEl?.track
@@ -341,7 +408,7 @@ export default function PlayerPage(): JSX.Element {
         textTrack.mode = i === activeIndex ? 'showing' : 'disabled'
       }
     })
-  }, [handle, probe])
+  }, [handle, probe, subtitleBlobs, currentSrc])
 
   // 4) Dispose on unmount.
   useEffect(() => {

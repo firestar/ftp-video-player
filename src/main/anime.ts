@@ -1,32 +1,14 @@
-import { promises as fs } from 'node:fs'
+import { Worker } from 'node:worker_threads'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { app } from 'electron'
 import type { AnimeMetadata } from '@shared/types'
 import { cacheMetadata, getCachedMetadata } from './store.js'
-
-const JIKAN_BASE = 'https://api.jikan.moe/v4'
-
-let lastRequest = 0
-async function rateLimit(): Promise<void> {
-  // Jikan limits to ~3 req/s; be conservative at 1.2 req/s.
-  const now = Date.now()
-  const elapsed = now - lastRequest
-  if (elapsed < 800) {
-    await new Promise((resolve) => setTimeout(resolve, 800 - elapsed))
-  }
-  lastRequest = Date.now()
-}
-
-function posterCacheDir(): string {
-  return path.join(app.getPath('userData'), 'posters')
-}
-
-async function ensurePosterDir(): Promise<string> {
-  const dir = posterCacheDir()
-  await fs.mkdir(dir, { recursive: true })
-  return dir
-}
+import type {
+  MetadataJob,
+  MetadataJobMessage,
+  MetadataJobResult
+} from './metadataWorker.js'
 
 function folderKey(serverId: string, folderPath: string): string {
   return createHash('sha1').update(`${serverId}:${folderPath}`).digest('hex')
@@ -43,76 +25,72 @@ export function normalizeFolderName(name: string): string {
     .trim()
 }
 
-interface JikanSearchResponse {
-  data: Array<{
-    mal_id: number
-    title: string
-    title_english?: string
-    title_japanese?: string
-    synopsis?: string
-    score?: number
-    year?: number
-    episodes?: number
-    type?: string
-    genres?: Array<{ name: string }>
-    themes?: Array<{ name: string }>
-    demographics?: Array<{ name: string }>
-    explicit_genres?: Array<{ name: string }>
-    images?: {
-      jpg?: { image_url?: string; large_image_url?: string }
-      webp?: { image_url?: string; large_image_url?: string }
+// All Jikan fetches + poster downloads run on a dedicated worker thread so they
+// never block the Electron main thread. The queue below also guarantees that
+// only one metadata job is in-flight at a time — protecting Jikan's rate limit
+// and keeping the worker's workload predictable.
+let worker: Worker | undefined
+let nextId = 1
+const pending = new Map<
+  number,
+  { resolve: (value: unknown) => void; reject: (err: Error) => void }
+>()
+let queue: Promise<unknown> = Promise.resolve()
+
+function getWorker(): Worker {
+  if (worker) return worker
+  const posterDir = path.join(app.getPath('userData'), 'posters')
+  const workerPath = path.join(__dirname, 'metadataWorker.js')
+  const w = new Worker(workerPath, { workerData: { posterDir } })
+  w.on('message', (msg: MetadataJobResult) => {
+    const waiter = pending.get(msg.id)
+    if (!waiter) return
+    pending.delete(msg.id)
+    if (msg.ok) waiter.resolve(msg.result)
+    else waiter.reject(new Error(msg.error ?? 'metadata worker failed'))
+  })
+  w.on('error', (err) => {
+    console.error('[anime] metadata worker error', err)
+    for (const [id, waiter] of pending) {
+      pending.delete(id)
+      waiter.reject(err)
     }
-  }>
+  })
+  w.on('exit', (code) => {
+    if (code !== 0) console.error('[anime] metadata worker exited with code', code)
+    worker = undefined
+  })
+  worker = w
+  return w
+}
+
+function dispatch<T>(job: MetadataJob): Promise<T> {
+  const task = queue.then(
+    () =>
+      new Promise<T>((resolve, reject) => {
+        const id = nextId++
+        pending.set(id, {
+          resolve: resolve as (value: unknown) => void,
+          reject
+        })
+        const message: MetadataJobMessage = { id, job }
+        try {
+          getWorker().postMessage(message)
+        } catch (err) {
+          pending.delete(id)
+          reject(err as Error)
+        }
+      })
+  )
+  queue = task.then(
+    () => undefined,
+    () => undefined
+  )
+  return task
 }
 
 export async function searchAnime(query: string): Promise<AnimeMetadata[]> {
-  await rateLimit()
-  const url = `${JIKAN_BASE}/anime?q=${encodeURIComponent(query)}&limit=10&sfw=false`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Jikan search failed: ${res.status}`)
-  const json = (await res.json()) as JikanSearchResponse
-  return json.data.map((d) => {
-    const tags = [
-      ...(d.themes?.map((t) => t.name) ?? []),
-      ...(d.demographics?.map((t) => t.name) ?? []),
-      ...(d.explicit_genres?.map((t) => t.name) ?? [])
-    ]
-    return {
-      malId: d.mal_id,
-      title: d.title,
-      englishTitle: d.title_english,
-      japaneseTitle: d.title_japanese,
-      synopsis: d.synopsis,
-      score: d.score,
-      year: d.year,
-      episodes: d.episodes,
-      type: d.type,
-      genres: d.genres?.map((g) => g.name),
-      tags: tags.length > 0 ? tags : undefined,
-      imageUrl: d.images?.jpg?.large_image_url ?? d.images?.jpg?.image_url
-    }
-  })
-}
-
-async function downloadPoster(imageUrl: string, key: string): Promise<string | undefined> {
-  try {
-    const dir = await ensurePosterDir()
-    const ext = path.extname(new URL(imageUrl).pathname).toLowerCase() || '.jpg'
-    const filePath = path.join(dir, `${key}${ext}`)
-    try {
-      await fs.access(filePath)
-      return filePath
-    } catch {
-      // fall through to download
-    }
-    const res = await fetch(imageUrl)
-    if (!res.ok) return undefined
-    const buf = Buffer.from(await res.arrayBuffer())
-    await fs.writeFile(filePath, buf)
-    return filePath
-  } catch {
-    return undefined
-  }
+  return dispatch<AnimeMetadata[]>({ kind: 'search', query })
 }
 
 export async function resolveMetadataForFolder(
@@ -128,17 +106,13 @@ export async function resolveMetadataForFolder(
   }
   const query = normalizeFolderName(folderName)
   if (!query) return undefined
-  let results: AnimeMetadata[]
+  let best: AnimeMetadata | undefined
   try {
-    results = await searchAnime(query)
+    best = await dispatch<AnimeMetadata | undefined>({ kind: 'resolve', query, key })
   } catch {
     return undefined
   }
-  const best = results[0]
   if (!best) return undefined
-  if (best.imageUrl) {
-    best.posterPath = await downloadPoster(best.imageUrl, key)
-  }
   cacheMetadata(key, best)
   return best
 }
@@ -150,7 +124,11 @@ export async function overrideMetadataForFolder(
 ): Promise<AnimeMetadata> {
   const key = folderKey(serverId, folderPath)
   if (metadata.imageUrl && !metadata.posterPath) {
-    metadata.posterPath = await downloadPoster(metadata.imageUrl, key)
+    metadata.posterPath = await dispatch<string | undefined>({
+      kind: 'downloadPoster',
+      imageUrl: metadata.imageUrl,
+      key
+    })
   }
   cacheMetadata(key, metadata)
   return metadata

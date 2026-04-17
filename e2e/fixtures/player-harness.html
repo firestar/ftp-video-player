@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Player visibility harness</title>
+    <link rel="stylesheet" href="../../src/renderer/src/styles.css" />
+  </head>
+  <body>
+    <div id="root">
+      <div class="app">
+        <aside class="sidebar">
+          <div class="sidebar-title"><span class="dot"></span>Anime Player</div>
+          <nav>
+            <a class="active" href="#">Library</a>
+            <a href="#">Servers</a>
+          </nav>
+        </aside>
+        <main class="main">
+          <div class="player-page">
+            <div class="player-topbar">
+              <button class="button ghost" id="back">← Back</button>
+              <div style="flex: 1">Sample Episode</div>
+            </div>
+            <div data-vjs-player class="player-video-wrap">
+              <video
+                id="harness-video"
+                class="player-video"
+                playsinline
+                muted
+              ></video>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      // Generate a live MediaStream so the <video> is truly playing, without
+      // requiring any binary fixture or network transport. This mirrors the
+      // real Player page's structure tightly enough that the `body.video-playing`
+      // CSS rule – which collapses the sidebar while playback is active – is
+      // exercised the same way it would be in the Electron app.
+      const video = document.getElementById('harness-video')
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 360
+      const ctx = canvas.getContext('2d')
+      let frame = 0
+      setInterval(() => {
+        ctx.fillStyle = `hsl(${frame % 360}, 70%, 50%)`
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        frame += 7
+      }, 33)
+
+      const stream = canvas.captureStream(30)
+      video.srcObject = stream
+
+      const sync = () => {
+        document.body.classList.toggle('video-playing', !video.paused)
+      }
+      video.addEventListener('play', sync)
+      video.addEventListener('playing', sync)
+      video.addEventListener('pause', sync)
+      video.addEventListener('ended', sync)
+
+      // Expose hooks for Playwright to control playback deterministically.
+      window.__harness = {
+        play: () => video.play(),
+        pause: () => video.pause(),
+        isPaused: () => video.paused,
+        currentTime: () => video.currentTime
+      }
+    </script>
+  </body>
+</html>

@@ -109,13 +109,73 @@ function SubtitleOverlay({ player }: { player: Player | null }): JSX.Element | n
 function cuePosition(cue: VTTCue): { left?: number; top?: number } | null {
   const out: { left?: number; top?: number } = {}
   if (typeof cue.position === 'number') out.left = clamp(cue.position, 0, 100)
-  // WebVTT `line` is a line index when snapToLines is true, a percentage from
-  // the top otherwise. We honor the percentage form; line indices would need
-  // rendered-text measurement.
-  if (typeof cue.line === 'number' && !cue.snapToLines) {
-    out.top = clamp(cue.line, 0, 100)
+  // WebVTT `line` is a percentage from the top when snapToLines is false, and
+  // a line index (0 = top, negative = from bottom) when true. ffmpeg's
+  // ASS→WebVTT conversion emits top-of-screen signs as `line:0` with
+  // snapToLines on; collapsing those into the default bottom stack causes
+  // signs to overlap dialogue, so we treat non-negative line indices as
+  // top-anchored to keep signs visually separated from dialogue.
+  if (typeof cue.line === 'number') {
+    if (!cue.snapToLines) {
+      out.top = clamp(cue.line, 0, 100)
+    } else if (cue.line >= 0) {
+      out.top = clamp(5 + cue.line * 6, 0, 90)
+    }
   }
   return out.left === undefined && out.top === undefined ? null : out
+}
+
+/**
+ * Shift every timestamp in a WebVTT document by `-offsetSeconds`, dropping
+ * cues that end before 0. Used in transcode mode: ffmpeg's output restarts
+ * the media clock at 0 when invoked with `-ss`, but the subtitle track was
+ * extracted from the full source and still uses original timestamps. Without
+ * this shift, cues fire `offsetSeconds` seconds after the matching frame.
+ */
+function shiftVtt(vtt: string, offsetSeconds: number): string {
+  if (offsetSeconds <= 0) return vtt
+  const TIMESTAMP_RE = /(?:\d+:)?\d{2}:\d{2}\.\d{3}/g
+  // Cue blocks are separated by blank lines. Drop cues whose end time would
+  // fall before zero; shift every timestamp (cue timing + inline karaoke
+  // markers) in surviving blocks.
+  const blocks = vtt.split(/\r?\n\r?\n/)
+  const out: string[] = []
+  for (const block of blocks) {
+    const timingLineMatch = block.match(
+      /^.*?((?:\d+:)?\d{2}:\d{2}\.\d{3})\s*-->\s*((?:\d+:)?\d{2}:\d{2}\.\d{3}).*$/m
+    )
+    if (!timingLineMatch) {
+      out.push(block)
+      continue
+    }
+    if (parseVttTime(timingLineMatch[2]) <= offsetSeconds) continue
+    const shifted = block.replace(TIMESTAMP_RE, (m) =>
+      formatVttTime(Math.max(0, parseVttTime(m) - offsetSeconds))
+    )
+    out.push(shifted)
+  }
+  return out.join('\n\n')
+}
+
+function parseVttTime(s: string): number {
+  const m = /^(?:(\d+):)?(\d{2}):(\d{2})\.(\d{3})$/.exec(s)
+  if (!m) return 0
+  const [, h, mm, ss, ms] = m
+  return (
+    (h ? Number(h) * 3600 : 0) +
+    Number(mm) * 60 +
+    Number(ss) +
+    Number(ms) / 1000
+  )
+}
+
+function formatVttTime(total: number): string {
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = Math.floor(total % 60)
+  const ms = Math.round((total - Math.floor(total)) * 1000)
+  const pad = (n: number, w = 2): string => n.toString().padStart(w, '0')
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(ms, 3)}`
 }
 
 function SubtitleCue({ cue }: { cue: VTTCue }): JSX.Element {
@@ -193,9 +253,15 @@ export default function PlayerPage(): JSX.Element {
   // Mirrors playerRef so children (the subtitle overlay) re-render with the
   // Video.js instance once it's created.
   const [playerInstance, setPlayerInstance] = useState<Player | null>(null)
-  // Blob URLs for prefetched WebVTT, keyed by ffprobe stream index. We fetch
-  // and buffer the whole VTT before attaching the <track> so Video.js can't
-  // silently drop a slow/failed HTTP track load.
+  // Raw WebVTT text for each prefetched track, keyed by ffprobe stream index.
+  // We fetch and buffer the whole VTT before attaching the <track> so Video.js
+  // can't silently drop a slow/failed HTTP track load. Storing the raw text
+  // (rather than just a blob URL) lets us re-shift timestamps when the
+  // transcode seek offset changes without refetching over FTP.
+  const [subtitleTexts, setSubtitleTexts] = useState<Map<number, string>>(new Map())
+  // Blob URLs derived from `subtitleTexts` shifted by the current transcode
+  // offset. Separated out so seeking in transcode mode only re-shifts in
+  // memory instead of triggering another ffmpeg extraction.
   const [subtitleBlobs, setSubtitleBlobs] = useState<Map<number, string>>(new Map())
   // Flips to true once the text-subtitle prefetch settles (or when the file
   // has no text subs). Playback waits on this so captions are ready before
@@ -436,7 +502,7 @@ export default function PlayerPage(): JSX.Element {
     }
   }, [currentSrc, mode, serverId, path, size, title, animeTitle, poster])
 
-  // 3a) Prefetch each text subtitle as WebVTT and expose it as a Blob URL.
+  // 3a) Prefetch each text subtitle as raw WebVTT text.
   // Doing the fetch ourselves (instead of letting Video.js's internal text
   // track loader pull the HTTP URL) is the difference between captions
   // rendering and silent failure: Video.js swallows XHR errors, and the
@@ -447,13 +513,12 @@ export default function PlayerPage(): JSX.Element {
     setSubtitlesLoaded(false)
     const textTracks = probe.subtitles.filter((s) => s.textBased)
     if (textTracks.length === 0) {
-      setSubtitleBlobs(new Map())
+      setSubtitleTexts(new Map())
       setSubtitlesLoaded(true)
       return
     }
 
     let cancelled = false
-    const created: string[] = []
 
     ;(async () => {
       const entries = await Promise.all(
@@ -467,33 +532,48 @@ export default function PlayerPage(): JSX.Element {
               return null
             }
             const text = await res.text()
-            const blob = new Blob([text], { type: 'text/vtt' })
-            const blobUrl = URL.createObjectURL(blob)
-            created.push(blobUrl)
-            return [sub.index, blobUrl] as const
+            return [sub.index, text] as const
           } catch (err) {
             console.error(`[subs] fetch ${sub.index} error`, err)
             return null
           }
         })
       )
-      if (cancelled) {
-        for (const u of created) URL.revokeObjectURL(u)
-        return
-      }
+      if (cancelled) return
       const next = new Map<number, string>()
       for (const entry of entries) {
         if (entry) next.set(entry[0], entry[1])
       }
-      setSubtitleBlobs(next)
+      setSubtitleTexts(next)
       setSubtitlesLoaded(true)
     })()
 
     return () => {
       cancelled = true
-      for (const u of created) URL.revokeObjectURL(u)
     }
   }, [handle, probe])
+
+  // 3a') Derive blob URLs for each track, shifted by the current transcode
+  // offset. In transcode mode the video's native currentTime resets to 0 on
+  // every seek while cue timestamps stay in the original file's timeline, so
+  // without this shift cues fire `transcodeStart` seconds after the matching
+  // frame.
+  useEffect(() => {
+    const offset = mode === 'transcode' ? transcodeStart : 0
+    const created: string[] = []
+    const next = new Map<number, string>()
+    for (const [idx, raw] of subtitleTexts) {
+      const shifted = shiftVtt(raw, offset)
+      const blob = new Blob([shifted], { type: 'text/vtt' })
+      const url = URL.createObjectURL(blob)
+      created.push(url)
+      next.set(idx, url)
+    }
+    setSubtitleBlobs(next)
+    return () => {
+      for (const u of created) URL.revokeObjectURL(u)
+    }
+  }, [subtitleTexts, mode, transcodeStart])
 
   // 3b) Attach the prefetched tracks to the player.
   useEffect(() => {

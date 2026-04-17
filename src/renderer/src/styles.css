@@ -52,7 +52,9 @@ body.video-playing .app {
 }
 
 body.video-playing .sidebar {
-  display: none;
+  overflow: hidden;
+  padding: 0;
+  border-right: none;
 }
 
 .sidebar {

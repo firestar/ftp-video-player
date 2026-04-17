@@ -77,9 +77,16 @@ function SubtitleOverlay({ player }: { player: Player | null }): JSX.Element | n
   }, [player])
 
   if (cues.length === 0) return null
+  // Some ASS→WebVTT conversions (and multi-layer sub tracks) emit the same
+  // line twice with identical text at the same timestamp. Collapse those so
+  // we don't stack identical captions on top of each other.
+  const seen = new Set<string>()
   const stacked: VTTCue[] = []
   const positioned: VTTCue[] = []
   for (const cue of cues) {
+    const key = `${cue.text}|${cue.position}|${cue.line}`
+    if (seen.has(key)) continue
+    seen.add(key)
     if (cuePosition(cue)) positioned.push(cue)
     else stacked.push(cue)
   }
@@ -174,6 +181,9 @@ export default function PlayerPage(): JSX.Element {
   // next `loadedmetadata` doesn't bounce the position back to the stale
   // saved-progress value.
   const suppressResumeRef = useRef(false)
+  // Tracks the src we've already auto-started, so mode switches replay the
+  // new source exactly once while respecting a user's subsequent pause.
+  const autoplayedSrcRef = useRef<string | null>(null)
 
   const [handle, setHandle] = useState<StreamHandle | null>(null)
   const [probe, setProbe] = useState<ProbeResult | null>(null)
@@ -187,6 +197,10 @@ export default function PlayerPage(): JSX.Element {
   // and buffer the whole VTT before attaching the <track> so Video.js can't
   // silently drop a slow/failed HTTP track load.
   const [subtitleBlobs, setSubtitleBlobs] = useState<Map<number, string>>(new Map())
+  // Flips to true once the text-subtitle prefetch settles (or when the file
+  // has no text subs). Playback waits on this so captions are ready before
+  // the first frame plays.
+  const [subtitlesLoaded, setSubtitlesLoaded] = useState(false)
   // Seconds of the source file the current transcode stream started at. When
   // the user seeks we bump this, which rebuilds the src with a new `?seek=`.
   const [transcodeStart, setTranscodeStart] = useState(0)
@@ -274,7 +288,9 @@ export default function PlayerPage(): JSX.Element {
     if (!playerRef.current) {
       const vjsPlayer = videojs(videoElRef.current, {
         controls: true,
-        autoplay: true,
+        // Autoplay is gated manually once subtitles (if any) are ready —
+        // see the playback-start effect below.
+        autoplay: false,
         preload: 'auto',
         fluid: false,
         playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
@@ -395,7 +411,6 @@ export default function PlayerPage(): JSX.Element {
 
     const player = playerRef.current
     player.src(currentSrc)
-    player.play()?.catch(() => undefined)
 
     const progressInterval = window.setInterval(() => {
       const p = playerRef.current
@@ -429,9 +444,11 @@ export default function PlayerPage(): JSX.Element {
   // whole MKV over FTP before it emits any cues.
   useEffect(() => {
     if (!handle || !probe) return
+    setSubtitlesLoaded(false)
     const textTracks = probe.subtitles.filter((s) => s.textBased)
     if (textTracks.length === 0) {
       setSubtitleBlobs(new Map())
+      setSubtitlesLoaded(true)
       return
     }
 
@@ -469,6 +486,7 @@ export default function PlayerPage(): JSX.Element {
         if (entry) next.set(entry[0], entry[1])
       }
       setSubtitleBlobs(next)
+      setSubtitlesLoaded(true)
     })()
 
     return () => {
@@ -527,6 +545,17 @@ export default function PlayerPage(): JSX.Element {
       }
     })
   }, [handle, probe, subtitleBlobs, currentSrc])
+
+  // 3c) Start playback once subtitles are ready. Autoplay is disabled on the
+  // player so the first frame never plays uncaptioned; we kick it off manually
+  // after the VTT prefetch settles. Triggers once per source (mode switches
+  // rebuild currentSrc and retry); user-initiated pauses are respected.
+  useEffect(() => {
+    if (!playerInstance || !currentSrc || !subtitlesLoaded) return
+    if (autoplayedSrcRef.current === currentSrc.src) return
+    autoplayedSrcRef.current = currentSrc.src
+    playerInstance.play()?.catch(() => undefined)
+  }, [playerInstance, currentSrc, subtitlesLoaded])
 
   // 4) Dispose on unmount.
   useEffect(() => {

@@ -637,6 +637,27 @@ export default function PlayerPage(): JSX.Element {
     playerInstance.play()?.catch(() => undefined)
   }, [playerInstance, currentSrc, subtitlesLoaded])
 
+  // Track whether Video.js is stalled waiting on the network so the loading
+  // bar can reappear during mid-playback buffering (e.g. FTP throttling or
+  // transcode seeks where ffmpeg needs a moment to emit the next fragment).
+  const [buffering, setBuffering] = useState(true)
+  useEffect(() => {
+    const p = playerInstance
+    if (!p) return
+    const onWaiting = (): void => setBuffering(true)
+    const onReady = (): void => setBuffering(false)
+    p.on('waiting', onWaiting)
+    p.on('loadstart', onWaiting)
+    p.on('playing', onReady)
+    p.on('canplay', onReady)
+    return () => {
+      p.off('waiting', onWaiting)
+      p.off('loadstart', onWaiting)
+      p.off('playing', onReady)
+      p.off('canplay', onReady)
+    }
+  }, [playerInstance])
+
   // 4) Dispose on unmount.
   useEffect(() => {
     return () => {
@@ -708,8 +729,9 @@ export default function PlayerPage(): JSX.Element {
       {error && <div className="empty" style={{ margin: 24 }}>Error: {error}</div>}
 
       {probing && !error && (
-        <div className="empty" style={{ margin: 24 }}>
-          Probing stream…
+        <div className="player-loading">
+          <div className="loading-bar" />
+          <div className="player-loading-text">Probing stream…</div>
         </div>
       )}
 
@@ -722,6 +744,7 @@ export default function PlayerPage(): JSX.Element {
             crossOrigin="anonymous"
           />
           <SubtitleOverlay player={playerInstance} />
+          {(!subtitlesLoaded || buffering) && <div className="loading-bar overlay" />}
         </div>
       )}
     </div>

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import type { AnimeEntry, LibraryRoot, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
 import { useFavorites } from '../favorites'
-import { formatWatchedTime } from './Anime'
 
 type SortKey = 'name' | 'rating' | 'year' | 'episodes' | 'watched' | 'added'
 type SortDir = 'asc' | 'desc'
@@ -27,6 +26,7 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 }
 
 const SORT_STORAGE_KEY = 'library:sort'
+const FILTER_STORAGE_KEY = 'library:filter'
 
 function loadSortPref(): { sortKey: SortKey; sortDir: SortDir } {
   try {
@@ -43,17 +43,35 @@ function loadSortPref(): { sortKey: SortKey; sortDir: SortDir } {
   return { sortKey: 'name', sortDir: 'asc' }
 }
 
+function loadFilterPref(): { genres: string[]; tags: string[] } {
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { genres?: string[]; tags?: string[] }
+      return {
+        genres: Array.isArray(parsed.genres) ? parsed.genres : [],
+        tags: Array.isArray(parsed.tags) ? parsed.tags : []
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { genres: [], tags: [] }
+}
+
 export default function Library(): JSX.Element {
   const [entriesById, setEntriesById] = useState<Record<string, AnimeEntry>>({})
   const [hasLoadedCache, setHasLoadedCache] = useState(false)
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
-  const [unfinished, setUnfinished] = useState<VideoProgress[]>([])
   const [allProgress, setAllProgress] = useState<VideoProgress[]>([])
   const initialSort = loadSortPref()
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.sortKey)
   const [sortDir, setSortDir] = useState<SortDir>(initialSort.sortDir)
+  const initialFilter = loadFilterPref()
+  const [selectedGenres, setSelectedGenres] = useState<string[]>(initialFilter.genres)
+  const [selectedTags, setSelectedTags] = useState<string[]>(initialFilter.tags)
   const navigate = useNavigate()
   const { isFavorite, toggle: toggleFavorite } = useFavorites()
 
@@ -65,13 +83,20 @@ export default function Library(): JSX.Element {
     }
   }, [sortKey, sortDir])
 
-  async function refreshUnfinished(): Promise<void> {
+  useEffect(() => {
     try {
-      const [unf, all] = await Promise.all([
-        api.listUnfinishedVideos(),
-        api.listVideoProgress()
-      ])
-      setUnfinished(unf)
+      localStorage.setItem(
+        FILTER_STORAGE_KEY,
+        JSON.stringify({ genres: selectedGenres, tags: selectedTags })
+      )
+    } catch {
+      // ignore
+    }
+  }, [selectedGenres, selectedTags])
+
+  async function refreshProgress(): Promise<void> {
+    try {
+      const all = await api.listVideoProgress()
       setAllProgress(all)
     } catch (err) {
       console.error(err)
@@ -113,13 +138,11 @@ export default function Library(): JSX.Element {
         setHasLoadedCache(true)
       }
       void refresh()
-      void refreshUnfinished()
+      void refreshProgress()
     })()
 
-    // Keep the sidebar fresh while the user is browsing so positions from
-    // another window / a just-closed player show up quickly.
-    const poll = window.setInterval(refreshUnfinished, 4000)
-    const onFocus = (): void => void refreshUnfinished()
+    const poll = window.setInterval(refreshProgress, 4000)
+    const onFocus = (): void => void refreshProgress()
     window.addEventListener('focus', onFocus)
 
     return () => {
@@ -196,14 +219,58 @@ export default function Library(): JSX.Element {
     return list
   }, [entriesById, sortKey, sortDir, latestWatchedByEntry])
 
+  const { availableGenres, availableTags } = useMemo(() => {
+    const genres = new Set<string>()
+    const tags = new Set<string>()
+    for (const e of Object.values(entriesById)) {
+      for (const g of e.metadata?.genres ?? []) genres.add(g)
+      for (const t of e.metadata?.tags ?? []) tags.add(t)
+    }
+    return {
+      availableGenres: Array.from(genres).sort((a, b) => a.localeCompare(b)),
+      availableTags: Array.from(tags).sort((a, b) => a.localeCompare(b))
+    }
+  }, [entriesById])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return entries
+    const hasQuery = q.length > 0
+    const hasGenreFilter = selectedGenres.length > 0
+    const hasTagFilter = selectedTags.length > 0
+    if (!hasQuery && !hasGenreFilter && !hasTagFilter) return entries
     return entries.filter((e) => {
-      const title = (e.metadata?.title ?? e.folderName).toLowerCase()
-      return title.includes(q) || e.folderName.toLowerCase().includes(q)
+      if (hasQuery) {
+        const title = (e.metadata?.title ?? e.folderName).toLowerCase()
+        if (!title.includes(q) && !e.folderName.toLowerCase().includes(q)) return false
+      }
+      if (hasGenreFilter) {
+        const genres = e.metadata?.genres ?? []
+        if (!selectedGenres.every((g) => genres.includes(g))) return false
+      }
+      if (hasTagFilter) {
+        const tags = e.metadata?.tags ?? []
+        if (!selectedTags.every((t) => tags.includes(t))) return false
+      }
+      return true
     })
-  }, [entries, query])
+  }, [entries, query, selectedGenres, selectedTags])
+
+  function toggleGenre(genre: string): void {
+    setSelectedGenres((prev) =>
+      prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre]
+    )
+  }
+
+  function toggleTag(tag: string): void {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    )
+  }
+
+  function clearFilters(): void {
+    setSelectedGenres([])
+    setSelectedTags([])
+  }
 
   if (!hasLoadedCache) {
     return (
@@ -216,94 +283,100 @@ export default function Library(): JSX.Element {
   const hasNoRoots = roots.length === 0
 
   return (
-    <div className="page library-page">
-      <div className="library-main">
-        <div className="page-header">
-          <h1>Library</h1>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <input
-              placeholder="Search…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                color: 'var(--text)',
-                outline: 'none',
-                minWidth: 220
-              }}
-            />
-            <select
-              aria-label="Sort by"
-              value={sortKey}
-              onChange={(e) => {
-                const next = e.target.value as SortKey
-                setSortKey(next)
-                setSortDir(DEFAULT_DIR[next])
-              }}
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '8px 10px',
-                color: 'var(--text)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.key} value={o.key}>
-                  Sort: {o.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className="button secondary"
-              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-              title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-              aria-label={`Toggle sort direction (currently ${sortDir === 'asc' ? 'ascending' : 'descending'})`}
-              style={{ padding: '8px 12px' }}
-            >
-              {sortDir === 'asc' ? '↑' : '↓'}
-            </button>
-            <button className="button secondary" onClick={refresh} disabled={loading}>
-              {loading ? 'Scanning…' : 'Rescan'}
-            </button>
-          </div>
-        </div>
-
-        {hasNoRoots && entries.length === 0 && (
-          <div className="empty">
-            No library folders yet.{' '}
-            <a onClick={() => navigate('/servers')}>Add a server</a> and point it at a folder like
-            <code> /Anime/Movies</code>.
-          </div>
-        )}
-
-        {!hasNoRoots && filtered.length === 0 && (
-          <div className="empty">
-            {loading ? 'Fetching metadata…' : 'No anime found in the configured folders.'}
-          </div>
-        )}
-
-        {filtered.length > 0 && (
-          <VirtualGrid
-            items={filtered}
-            getKey={(e) => e.id}
-            renderItem={(entry) => (
-              <AnimeCard
-                entry={entry}
-                isFavorite={isFavorite(entry)}
-                onToggleFavorite={() => void toggleFavorite(entry)}
-              />
-            )}
+    <div className="page">
+      <div className="page-header">
+        <h1>Library</h1>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '8px 12px',
+              color: 'var(--text)',
+              outline: 'none',
+              minWidth: 220
+            }}
           />
-        )}
+          <select
+            aria-label="Sort by"
+            value={sortKey}
+            onChange={(e) => {
+              const next = e.target.value as SortKey
+              setSortKey(next)
+              setSortDir(DEFAULT_DIR[next])
+            }}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '8px 10px',
+              color: 'var(--text)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                Sort: {o.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="button secondary"
+            onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+            aria-label={`Toggle sort direction (currently ${sortDir === 'asc' ? 'ascending' : 'descending'})`}
+            style={{ padding: '8px 12px' }}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+          <button className="button secondary" onClick={refresh} disabled={loading}>
+            {loading ? 'Scanning…' : 'Rescan'}
+          </button>
+        </div>
       </div>
 
-      <ContinueWatching items={unfinished} />
+      <FilterBar
+        availableGenres={availableGenres}
+        availableTags={availableTags}
+        selectedGenres={selectedGenres}
+        selectedTags={selectedTags}
+        onToggleGenre={toggleGenre}
+        onToggleTag={toggleTag}
+        onClear={clearFilters}
+      />
+
+      {hasNoRoots && entries.length === 0 && (
+        <div className="empty">
+          No library folders yet.{' '}
+          <a onClick={() => navigate('/servers')}>Add a server</a> and point it at a folder like
+          <code> /Anime/Movies</code>.
+        </div>
+      )}
+
+      {!hasNoRoots && filtered.length === 0 && (
+        <div className="empty">
+          {loading ? 'Fetching metadata…' : 'No anime found in the configured folders.'}
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <VirtualGrid
+          items={filtered}
+          getKey={(e) => e.id}
+          renderItem={(entry) => (
+            <AnimeCard
+              entry={entry}
+              isFavorite={isFavorite(entry)}
+              onToggleFavorite={() => void toggleFavorite(entry)}
+            />
+          )}
+        />
+      )}
     </div>
   )
 }
@@ -462,61 +535,130 @@ function VirtualGrid<T>({
   )
 }
 
-function ContinueWatching({ items }: { items: VideoProgress[] }): JSX.Element {
-  const navigate = useNavigate()
+function FilterBar({
+  availableGenres,
+  availableTags,
+  selectedGenres,
+  selectedTags,
+  onToggleGenre,
+  onToggleTag,
+  onClear
+}: {
+  availableGenres: string[]
+  availableTags: string[]
+  selectedGenres: string[]
+  selectedTags: string[]
+  onToggleGenre: (g: string) => void
+  onToggleTag: (t: string) => void
+  onClear: () => void
+}): JSX.Element | null {
+  if (availableGenres.length === 0 && availableTags.length === 0) return null
+  const hasActive = selectedGenres.length > 0 || selectedTags.length > 0
+  return (
+    <div className="filter-bar">
+      {availableGenres.length > 0 && (
+        <FilterGroup
+          label="Genre"
+          options={availableGenres}
+          selected={selectedGenres}
+          onToggle={onToggleGenre}
+        />
+      )}
+      {availableTags.length > 0 && (
+        <FilterGroup
+          label="Tag"
+          options={availableTags}
+          selected={selectedTags}
+          onToggle={onToggleTag}
+        />
+      )}
+      {hasActive && (
+        <button className="filter-clear" onClick={onClear} type="button">
+          Clear filters
+        </button>
+      )}
+    </div>
+  )
+}
 
-  function play(p: VideoProgress): void {
-    const q = new URLSearchParams({
-      path: p.path,
-      size: String(p.size),
-      title: p.videoName,
-      animeTitle: p.animeTitle
-    })
-    if (p.posterPath) q.set('poster', p.posterPath)
-    navigate(`/player/${encodeURIComponent(p.serverId)}?${q.toString()}`)
-  }
+function FilterGroup({
+  label,
+  options,
+  selected,
+  onToggle
+}: {
+  label: string
+  options: string[]
+  selected: string[]
+  onToggle: (value: string) => void
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(ev: MouseEvent): void {
+      if (!containerRef.current) return
+      if (!containerRef.current.contains(ev.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const summary =
+    selected.length === 0
+      ? `All ${label.toLowerCase()}s`
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} ${label.toLowerCase()}s`
 
   return (
-    <aside className="continue-side">
-      <h3>Continue Watching</h3>
-      {items.length === 0 && (
-        <div className="continue-empty">Nothing in progress yet.</div>
+    <div className="filter-group" ref={containerRef}>
+      <button
+        type="button"
+        className={`filter-trigger${selected.length > 0 ? ' active' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className="filter-trigger-label">{label}:</span>
+        <span className="filter-trigger-value">{summary}</span>
+        <span className="filter-trigger-caret">▾</span>
+      </button>
+      {open && (
+        <div className="filter-menu" role="listbox">
+          {options.map((opt) => {
+            const checked = selected.includes(opt)
+            return (
+              <label key={opt} className={`filter-option${checked ? ' checked' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(opt)}
+                />
+                <span>{opt}</span>
+              </label>
+            )
+          })}
+        </div>
       )}
-      <div className="continue-list">
-        {items.map((p) => {
-          const poster = localFileUrl(p.posterPath)
-          const ratio =
-            p.durationSeconds > 0
-              ? Math.min(100, (p.positionSeconds / p.durationSeconds) * 100)
-              : 0
-          return (
-            <div
-              key={`${p.serverId}::${p.path}`}
-              className="continue-item"
-              onClick={() => play(p)}
+      {selected.length > 0 && (
+        <div className="filter-chips">
+          {selected.map((v) => (
+            <button
+              key={v}
+              type="button"
+              className="filter-chip"
+              onClick={() => onToggle(v)}
+              title="Remove filter"
             >
-              <div
-                className="continue-poster"
-                style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
-              >
-                {!poster && <span>🎬</span>}
-              </div>
-              <div className="continue-body">
-                <div className="continue-title">{p.animeTitle}</div>
-                <div className="continue-episode">{p.videoName}</div>
-                <div className="continue-meta">
-                  {formatWatchedTime(p.positionSeconds)}
-                  {p.durationSeconds > 0 ? ` / ${formatWatchedTime(p.durationSeconds)}` : ''}
-                </div>
-                <div className="continue-progress">
-                  <div className="continue-progress-bar" style={{ width: `${ratio}%` }} />
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </aside>
+              {v}
+              <span className="filter-chip-x">×</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

@@ -55,6 +55,9 @@ interface JikanSearchResponse {
     episodes?: number
     type?: string
     genres?: Array<{ name: string }>
+    themes?: Array<{ name: string }>
+    demographics?: Array<{ name: string }>
+    explicit_genres?: Array<{ name: string }>
     images?: {
       jpg?: { image_url?: string; large_image_url?: string }
       webp?: { image_url?: string; large_image_url?: string }
@@ -68,19 +71,27 @@ export async function searchAnime(query: string): Promise<AnimeMetadata[]> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Jikan search failed: ${res.status}`)
   const json = (await res.json()) as JikanSearchResponse
-  return json.data.map((d) => ({
-    malId: d.mal_id,
-    title: d.title,
-    englishTitle: d.title_english,
-    japaneseTitle: d.title_japanese,
-    synopsis: d.synopsis,
-    score: d.score,
-    year: d.year,
-    episodes: d.episodes,
-    type: d.type,
-    genres: d.genres?.map((g) => g.name),
-    imageUrl: d.images?.jpg?.large_image_url ?? d.images?.jpg?.image_url
-  }))
+  return json.data.map((d) => {
+    const tags = [
+      ...(d.themes?.map((t) => t.name) ?? []),
+      ...(d.demographics?.map((t) => t.name) ?? []),
+      ...(d.explicit_genres?.map((t) => t.name) ?? [])
+    ]
+    return {
+      malId: d.mal_id,
+      title: d.title,
+      englishTitle: d.title_english,
+      japaneseTitle: d.title_japanese,
+      synopsis: d.synopsis,
+      score: d.score,
+      year: d.year,
+      episodes: d.episodes,
+      type: d.type,
+      genres: d.genres?.map((g) => g.name),
+      tags: tags.length > 0 ? tags : undefined,
+      imageUrl: d.images?.jpg?.large_image_url ?? d.images?.jpg?.image_url
+    }
+  })
 }
 
 async function downloadPoster(imageUrl: string, key: string): Promise<string | undefined> {

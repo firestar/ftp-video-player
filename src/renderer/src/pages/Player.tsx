@@ -8,6 +8,25 @@ import { api } from '../api'
 
 type PlaybackMode = 'direct' | 'transcode'
 
+// A fragmented MP4 from ffmpeg has no duration in its moov and reports
+// `Infinity` to the browser, which breaks the Video.js progress bar and seek
+// controls. We work around that by tracking the `-ss` offset we asked ffmpeg
+// to start from and patching the player's time/duration/seekable accessors so
+// the UI sees a virtual timeline spanning the whole file.
+function createFakeTimeRanges(start: number, end: number): TimeRanges {
+  return {
+    length: 1,
+    start: (i: number) => {
+      if (i !== 0) throw new Error('index out of bounds')
+      return start
+    },
+    end: (i: number) => {
+      if (i !== 0) throw new Error('index out of bounds')
+      return end
+    }
+  } as TimeRanges
+}
+
 function subtitleLabel(track: SubtitleTrackInfo): string {
   const parts: string[] = []
   if (track.title) parts.push(track.title)
@@ -37,12 +56,34 @@ export default function PlayerPage(): JSX.Element {
   const videoElRef = useRef<HTMLVideoElement>(null)
   const playerRef = useRef<Player | null>(null)
   const hasResumedRef = useRef(false)
+  // Set when a user-initiated seek triggers a transcode src reload, so the
+  // next `loadedmetadata` doesn't bounce the position back to the stale
+  // saved-progress value.
+  const suppressResumeRef = useRef(false)
 
   const [handle, setHandle] = useState<StreamHandle | null>(null)
   const [probe, setProbe] = useState<ProbeResult | null>(null)
   const [mode, setMode] = useState<PlaybackMode>('direct')
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(true)
+  // Seconds of the source file the current transcode stream started at. When
+  // the user seeks we bump this, which rebuilds the src with a new `?seek=`.
+  const [transcodeStart, setTranscodeStart] = useState(0)
+
+  // Refs mirror the reactive values above so the monkey-patched player
+  // methods (installed once) always read the latest values.
+  const modeRef = useRef(mode)
+  const probeRef = useRef(probe)
+  const transcodeStartRef = useRef(transcodeStart)
+  useEffect(() => {
+    modeRef.current = mode
+  }, [mode])
+  useEffect(() => {
+    probeRef.current = probe
+  }, [probe])
+  useEffect(() => {
+    transcodeStartRef.current = transcodeStart
+  }, [transcodeStart])
 
   // 1) Register the stream and fetch the probe.
   useEffect(() => {
@@ -79,10 +120,19 @@ export default function PlayerPage(): JSX.Element {
     }
   }, [serverId, path, size])
 
+  // When switching modes or loading a new file, reset the transcode offset.
+  useEffect(() => {
+    setTranscodeStart(0)
+  }, [mode, handle?.token])
+
   const currentSrc = useMemo(() => {
     if (!handle) return null
     if (mode === 'transcode') {
-      return { src: handle.transcodeUrl, type: 'video/mp4' as const }
+      const url =
+        transcodeStart > 0
+          ? `${handle.transcodeUrl}?seek=${transcodeStart}`
+          : handle.transcodeUrl
+      return { src: url, type: 'video/mp4' as const }
     }
     const ext = path.split('.').pop()?.toLowerCase() ?? ''
     const mime =
@@ -94,7 +144,7 @@ export default function PlayerPage(): JSX.Element {
             ? 'video/quicktime'
             : 'video/mp4'
     return { src: handle.directUrl, type: mime }
-  }, [handle, mode, path])
+  }, [handle, mode, path, transcodeStart])
 
   // 2) Create / update the Video.js player whenever the source changes.
   useEffect(() => {
@@ -115,11 +165,54 @@ export default function PlayerPage(): JSX.Element {
         }
       })
 
+      // Patch the player's time/duration/seekable accessors so transcode mode
+      // presents a virtual timeline covering the whole file, and so clicking
+      // the seek bar triggers a re-transcode from the requested timestamp.
+      const nativeDuration = vjsPlayer.duration.bind(vjsPlayer)
+      const nativeCurrentTime = vjsPlayer.currentTime.bind(vjsPlayer)
+      const nativeSeekable = vjsPlayer.seekable.bind(vjsPlayer)
+      /* eslint-disable @typescript-eslint/no-explicit-any */
+      ;(vjsPlayer as any).duration = (val?: number): any => {
+        if (val !== undefined) return nativeDuration(val)
+        const probeDur = probeRef.current?.duration
+        if (modeRef.current === 'transcode' && probeDur && Number.isFinite(probeDur)) {
+          return probeDur
+        }
+        return nativeDuration() ?? 0
+      }
+      ;(vjsPlayer as any).currentTime = (val?: number): any => {
+        if (modeRef.current !== 'transcode') {
+          if (val !== undefined) return nativeCurrentTime(val)
+          return nativeCurrentTime() ?? 0
+        }
+        if (val === undefined) {
+          const native = nativeCurrentTime() ?? 0
+          return (Number.isFinite(native) ? native : 0) + transcodeStartRef.current
+        }
+        const probeDur = probeRef.current?.duration
+        const max = probeDur && Number.isFinite(probeDur) ? probeDur : val
+        const target = Math.max(0, Math.min(val, max))
+        // Only reload if the delta is meaningful — tiny Video.js-internal nudges
+        // (e.g. `currentTime(0)` right after src swap) shouldn't restart ffmpeg.
+        if (Math.abs(target - transcodeStartRef.current) < 0.5) return vjsPlayer
+        suppressResumeRef.current = true
+        setTranscodeStart(target)
+        return vjsPlayer
+      }
+      ;(vjsPlayer as any).seekable = (): TimeRanges => {
+        const probeDur = probeRef.current?.duration
+        if (modeRef.current === 'transcode' && probeDur && Number.isFinite(probeDur)) {
+          return createFakeTimeRanges(0, probeDur)
+        }
+        return nativeSeekable()
+      }
+      /* eslint-enable @typescript-eslint/no-explicit-any */
+
       vjsPlayer.on('error', () => {
         const err = vjsPlayer.error()
         // When the direct source can't be decoded by Chromium, fall back to
         // the transcoded stream automatically.
-        if (mode === 'direct' && err && (err.code === 3 || err.code === 4)) {
+        if (modeRef.current === 'direct' && err && (err.code === 3 || err.code === 4)) {
           vjsPlayer.error(undefined as never)
           setMode('transcode')
           return
@@ -141,6 +234,19 @@ export default function PlayerPage(): JSX.Element {
       // most recently saved position for this file. Skipped for videos watched
       // past the 85% "finished" threshold so rewatches start from the top.
       vjsPlayer.on('loadedmetadata', () => {
+        // Fragmented MP4 reports `Infinity` for duration — re-fire the
+        // durationchange event so Video.js reads our patched value and renders
+        // a normal progress bar instead of the live UI.
+        if (modeRef.current === 'transcode') vjsPlayer.trigger('durationchange')
+
+        // After a user-initiated transcode seek, don't let the resume-from-
+        // saved-position logic drag the player back to the previous spot.
+        if (suppressResumeRef.current) {
+          suppressResumeRef.current = false
+          hasResumedRef.current = true
+          return
+        }
+
         void (async () => {
           try {
             const saved = await api.getVideoProgress(serverId, path)
@@ -174,7 +280,7 @@ export default function PlayerPage(): JSX.Element {
       if (!p) return
       const currentTime = p.currentTime() ?? 0
       const duration = p.duration() ?? 0
-      if (!duration || currentTime < 0.1) return
+      if (!duration || !Number.isFinite(duration) || currentTime < 0.1) return
       api.setVideoProgress({
         serverId,
         path,

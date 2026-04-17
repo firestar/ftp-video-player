@@ -166,15 +166,20 @@ export default function Anime(): JSX.Element {
             {entry.metadata?.episodes ? ` · ${entry.metadata.episodes} eps` : ''}
             {entry.metadata?.score ? ` · ⭐ ${entry.metadata.score}` : ''}
           </div>
-          {entry.metadata?.genres && (
+          {(entry.metadata?.genres?.length || entry.metadata?.tags?.length) ? (
             <div style={{ marginBottom: 14 }}>
-              {entry.metadata.genres.map((g) => (
-                <span key={g} className="pill">
+              {entry.metadata?.genres?.map((g) => (
+                <span key={`g:${g}`} className="pill">
                   {g}
                 </span>
               ))}
+              {entry.metadata?.tags?.map((t) => (
+                <span key={`t:${t}`} className="pill pill-tag">
+                  {t}
+                </span>
+              ))}
             </div>
-          )}
+          ) : null}
           {entry.metadata?.synopsis && <div className="synopsis">{entry.metadata.synopsis}</div>}
 
           <h3 style={{ marginTop: 22, marginBottom: 10 }}>Videos ({entry.videos.length})</h3>

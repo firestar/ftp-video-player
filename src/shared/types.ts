@@ -99,6 +99,8 @@ export interface SubtitleTrackInfo {
   language?: string
   title?: string
   isDefault: boolean
+  /** False for bitmap formats (PGS/DVD/DVB/XSUB) that can't be served as WebVTT. */
+  textBased: boolean
 }
 
 export interface ProbeResult {

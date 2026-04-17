@@ -310,15 +310,20 @@ export default function PlayerPage(): JSX.Element {
       if (tt) player.removeRemoteTextTrack(tt as unknown as HTMLTrackElement)
     }
 
-    if (probe.subtitles.length === 0) return
+    // Bitmap formats (PGS/DVD/DVB) can't be served as WebVTT, so they don't
+    // belong in the captions menu — they would attach as silent phantom tracks
+    // and starve real text subs of the default-selection slot. Bitmap subs
+    // require burn-in via the transcode endpoint instead.
+    const textTracks = probe.subtitles.filter((s) => s.textBased)
+    if (textTracks.length === 0) return
 
     // Pick the track to show by default: the ffprobe-flagged default track,
     // or fall back to the first one so users always see subtitles when the
     // file has them.
-    const preferred = probe.subtitles.findIndex((s) => s.isDefault)
+    const preferred = textTracks.findIndex((s) => s.isDefault)
     const activeIndex = preferred >= 0 ? preferred : 0
 
-    probe.subtitles.forEach((sub, i) => {
+    textTracks.forEach((sub, i) => {
       const trackEl = player.addRemoteTextTrack(
         {
           kind: 'subtitles',

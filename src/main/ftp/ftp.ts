@@ -24,6 +24,11 @@ export class FtpClient implements IFtpClient {
   // Some servers advertise MLSD via FEAT but drop the control connection when
   // it's issued. After the first FIN we skip MLSD and stick to plain LIST.
   private listCommandOverride: string[] | null = null
+  // Many modern FTP servers reject unencrypted control sessions and close the
+  // socket as soon as a data command is issued. When that happens we fall back
+  // to AUTH TLS on the same port (explicit FTPS) for the remainder of the
+  // session, even if the user configured plain FTP.
+  private secureOverride: boolean | null = null
 
   constructor(private readonly config: FtpServerConfig) {
     this.client = this.buildClient()
@@ -38,9 +43,15 @@ export class FtpClient implements IFtpClient {
     return client
   }
 
+  private resolveSecure(): boolean {
+    if (this.secureOverride !== null) return this.secureOverride
+    if (this.config.protocol === 'ftps') return true
+    return this.config.secure ?? false
+  }
+
   private async doConnect(): Promise<void> {
-    const { host, port, username, password, protocol, allowSelfSigned } = this.config
-    const secure = protocol === 'ftps' ? true : this.config.secure ?? false
+    const { host, port, username, password, allowSelfSigned } = this.config
+    const secure = this.resolveSecure()
     await this.client.access({
       host,
       port: port || 21,
@@ -67,14 +78,15 @@ export class FtpClient implements IFtpClient {
     this.connected = false
   }
 
-  private async reset(skipMlsd: boolean): Promise<void> {
+  private async reset(opts: { skipMlsd?: boolean; upgradeTls?: boolean } = {}): Promise<void> {
     try {
       this.client.close()
     } catch {
       // ignore
     }
     this.connected = false
-    if (skipMlsd) this.listCommandOverride = ['LIST']
+    if (opts.skipMlsd) this.listCommandOverride = ['LIST']
+    if (opts.upgradeTls) this.secureOverride = true
     this.client = this.buildClient()
   }
 
@@ -83,16 +95,33 @@ export class FtpClient implements IFtpClient {
       return await op()
     } catch (err) {
       if (!isTransientFtpError(err)) throw err
-      // Control connection was dropped — rebuild the client and try once more,
-      // this time avoiding MLSD which is a common culprit on older servers.
-      await this.reset(true)
+      // First fallback: rebuild the client and avoid MLSD, which is a common
+      // culprit on older servers that advertise it but bail when it's issued.
+      await this.reset({ skipMlsd: true })
       try {
         return await op()
       } catch (err2) {
-        throw new Error(
-          `${(err2 as Error).message} — the FTP server dropped the connection. ` +
-            `Try enabling "Upgrade to TLS after connect" in the server settings, or use SFTP.`
-        )
+        if (!isTransientFtpError(err2)) throw err2
+        // Second fallback: many modern FTP servers refuse to serve plain
+        // sessions and drop the socket. If the user configured plain FTP,
+        // transparently upgrade to AUTH TLS on the same port and retry.
+        if (this.resolveSecure()) {
+          throw new Error(
+            `${(err2 as Error).message} — the FTP server dropped the connection. ` +
+              `The server may not be reachable, or its TLS certificate may be untrusted ` +
+              `(try enabling "Allow self-signed certificates"). SFTP is also worth trying.`
+          )
+        }
+        await this.reset({ skipMlsd: true, upgradeTls: true })
+        try {
+          return await op()
+        } catch (err3) {
+          throw new Error(
+            `${(err3 as Error).message} — the FTP server dropped the connection, ` +
+              `and upgrading to TLS (AUTH TLS) also failed. ` +
+              `Try enabling "Upgrade to TLS after connect" in the server settings, or use SFTP.`
+          )
+        }
       }
     }
   }

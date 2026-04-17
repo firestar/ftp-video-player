@@ -110,15 +110,19 @@ export function getCachedLibrary(): AnimeEntry[] {
 }
 
 /**
- * Walk every library root, emitting each anime entry as soon as it's
- * discovered and again once metadata is resolved. Cached metadata is attached
- * synchronously so the renderer can render immediately even while we're still
- * fetching from Jikan in the background.
+ * Two-phase scan:
+ *   1. List the folders in every library root and emit them immediately so the
+ *      grid populates right away (with cached metadata + posters where we have
+ *      them).
+ *   2. Then go back and fetch metadata + posters from MyAnimeList for any
+ *      folder that's missing it, re-emitting each entry once it's enriched.
  */
 export async function scanAllLibrariesStreaming(
   onItem: (entry: AnimeEntry) => void
 ): Promise<void> {
   const roots = listLibraryRoots()
+  const enrichedByRoot = new Map<string, AnimeEntry[]>()
+  const needsMetadata: AnimeEntry[] = []
 
   for (const root of roots) {
     let scanned: AnimeEntry[]
@@ -129,32 +133,36 @@ export async function scanAllLibrariesStreaming(
       continue
     }
 
-    const enriched: AnimeEntry[] = []
-    const needsMetadata: AnimeEntry[] = []
-    for (const entry of scanned) {
-      const cachedMetadata = getCachedMetadata(folderKey(entry.serverId, entry.path))
-      const withMeta = { ...entry, metadata: cachedMetadata }
-      enriched.push(withMeta)
-      onItem(withMeta)
-      if (!cachedMetadata) needsMetadata.push(withMeta)
-    }
-
+    const enriched: AnimeEntry[] = scanned.map((entry) => ({
+      ...entry,
+      metadata: getCachedMetadata(folderKey(entry.serverId, entry.path))
+    }))
+    enrichedByRoot.set(root.id, enriched)
     setCachedEntriesForRoot(root.id, enriched)
 
-    for (const entry of needsMetadata) {
-      const metadata = await resolveMetadataForFolder(
-        entry.serverId,
-        entry.path,
-        entry.folderName
-      ).catch(() => undefined)
-      if (metadata) {
-        const updated = { ...entry, metadata }
-        const idx = enriched.findIndex((e) => e.id === updated.id)
-        if (idx >= 0) enriched[idx] = updated
-        setCachedEntriesForRoot(root.id, enriched)
-        onItem(updated)
+    for (const entry of enriched) {
+      onItem(entry)
+      if (!entry.metadata) needsMetadata.push(entry)
+    }
+  }
+
+  for (const entry of needsMetadata) {
+    const metadata = await resolveMetadataForFolder(
+      entry.serverId,
+      entry.path,
+      entry.folderName
+    ).catch(() => undefined)
+    if (!metadata) continue
+    const updated = { ...entry, metadata }
+    const enriched = enrichedByRoot.get(entry.libraryRootId)
+    if (enriched) {
+      const idx = enriched.findIndex((e) => e.id === updated.id)
+      if (idx >= 0) {
+        enriched[idx] = updated
+        setCachedEntriesForRoot(entry.libraryRootId, enriched)
       }
     }
+    onItem(updated)
   }
 }
 

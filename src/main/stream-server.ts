@@ -2,6 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
+import type { Readable } from 'node:stream'
 import ffmpeg from 'fluent-ffmpeg'
 import ffmpegStatic from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
@@ -480,6 +481,13 @@ async function getSubtitleCodec(
 /**
  * Extract a single embedded subtitle track and serve it as WebVTT. The track
  * index refers to the stream index reported by /probe.
+ *
+ * We open our own FTP read stream and pipe it into ffmpeg's stdin rather than
+ * pointing ffmpeg at `/stream/<token>`. Going back through our HTTP endpoint
+ * would cause ffmpeg's byte-range seeks to spawn additional FTP sessions for
+ * every request, and anime FTP servers commonly cap concurrent sessions at
+ * 1–2 — the extra connections deadlock against the already-open video stream
+ * and the subtitle fetch stalls forever with no visible error.
  */
 async function handleSubtitle(
   req: http.IncomingMessage,
@@ -516,14 +524,19 @@ async function handleSubtitle(
     return
   }
 
-  res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
-  res.setHeader('Cache-Control', 'no-store')
-  res.statusCode = 200
+  const ftpServer = getServer(reg.serverId)
+  if (!ftpServer) {
+    res.statusCode = 404
+    res.end('server missing')
+    return
+  }
 
   const args = [
     '-hide_banner',
     '-loglevel', 'error',
-    '-i', selfUrl(token),
+    '-probesize', '10M',
+    '-analyzeduration', '10M',
+    '-i', 'pipe:0',
     '-map', `0:${streamIndex}`,
     '-c:s', 'webvtt',
     '-f', 'webvtt',
@@ -532,7 +545,11 @@ async function handleSubtitle(
 
   const proc = spawn(ffmpegPath, args)
   let bytesWritten = 0
+  let stderrTail = ''
   let cleaned = false
+  let ftpClient: IFtpClient | undefined
+  let ftpStream: Readable | undefined
+
   const cleanup = (): void => {
     if (cleaned) return
     cleaned = true
@@ -541,6 +558,12 @@ async function handleSubtitle(
     } catch {
       // ignore
     }
+    try {
+      ftpStream?.destroy()
+    } catch {
+      // ignore
+    }
+    ftpClient?.disconnect().catch(() => undefined)
   }
 
   proc.on('error', (err) => {
@@ -554,24 +577,66 @@ async function handleSubtitle(
     }
   })
   proc.on('close', (code) => {
-    if (code !== 0 && bytesWritten === 0 && !res.headersSent) {
-      res.statusCode = 500
-      res.end('subtitle conversion failed')
+    if (code !== 0 && bytesWritten === 0) {
+      if (!res.headersSent) {
+        res.statusCode = 500
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+        res.end(`subtitle conversion failed (code ${code}): ${stderrTail.trim() || 'no stderr'}`)
+      }
     }
-    // proc.stdout.pipe(res) ends res when stdout ends; nothing more to do.
+    cleanup()
   })
 
   proc.stdout.on('data', (chunk: Buffer) => {
+    if (bytesWritten === 0) {
+      // First bytes arrived — commit to a 200 WebVTT response.
+      res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
+      res.setHeader('Cache-Control', 'no-store')
+      res.statusCode = 200
+    }
     bytesWritten += chunk.length
   })
   proc.stdout.pipe(res)
   proc.stderr.on('data', (chunk: Buffer) => {
-    const msg = chunk.toString('utf8').trim()
-    if (msg) console.error('[subtitle]', msg)
+    const msg = chunk.toString('utf8')
+    stderrTail = (stderrTail + msg).slice(-2000)
+    const trimmed = msg.trim()
+    if (trimmed) console.error('[subtitle]', trimmed)
   })
 
   req.on('close', cleanup)
   res.on('close', cleanup)
+
+  // Pipe the FTP read into ffmpeg's stdin. Errors on either side tear the
+  // whole pipeline down via cleanup().
+  try {
+    ftpClient = await createFtpClient(ftpServer)
+    await ftpClient.connect()
+    ftpStream = await ftpClient.createReadStream(reg.path)
+    ftpStream.on('error', (err) => {
+      console.error('[subtitle] ftp stream error', err)
+      try {
+        proc.stdin.destroy(err)
+      } catch {
+        // ignore
+      }
+    })
+    proc.stdin.on('error', () => {
+      // EPIPE when ffmpeg exits before we finish writing; just tear down.
+      ftpStream?.destroy()
+    })
+    ftpStream.pipe(proc.stdin)
+  } catch (err) {
+    console.error('[subtitle] ftp open failed', err)
+    cleanup()
+    if (!res.headersSent) {
+      res.statusCode = 500
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.end(`subtitle source open failed: ${(err as Error).message}`)
+    } else {
+      res.destroy()
+    }
+  }
 }
 
 function setCors(res: http.ServerResponse): void {

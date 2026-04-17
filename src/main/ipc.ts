@@ -35,8 +35,10 @@ export function registerIpcHandlers(): void {
     async (_e, config: FtpServerConfig): Promise<ConnectionTestResult> => {
       const client = await createFtpClient(config)
       try {
-        await client.connect()
-        await client.list('/').catch(() => [])
+        // list() both connects and exercises a data transfer, so it actually
+        // surfaces FIN drops that only show up on the first LIST/MLSD — a
+        // plain connect() often succeeds on servers that reject browsing.
+        await client.list('/')
         return { ok: true }
       } catch (err) {
         return { ok: false, error: (err as Error).message }
@@ -53,7 +55,8 @@ export function registerIpcHandlers(): void {
       if (!server) throw new Error('server not found')
       const client = await createFtpClient(server)
       try {
-        await client.connect()
+        // list() handles connect internally via withRetry, which means FIN
+        // failures during access() can still trigger the TLS-upgrade fallback.
         return await client.list(remotePath || '/')
       } finally {
         await client.disconnect().catch(() => undefined)

@@ -110,8 +110,16 @@ export interface Api {
   addLibraryRoot(input: Omit<LibraryRoot, 'id'>): Promise<LibraryRoot>
   removeLibraryRoot(id: string): Promise<void>
 
-  scanLibrary(): Promise<AnimeEntry[]>
+  scanLibrary(): Promise<void>
+  cachedLibrary(): Promise<AnimeEntry[]>
+  onLibraryItem(cb: (entry: AnimeEntry) => void): () => void
+  onLibraryDone(cb: () => void): () => void
   loadAnime(serverId: string, path: string, libraryRootId: string): Promise<AnimeEntry | undefined>
+  cachedAnime(
+    serverId: string,
+    path: string,
+    libraryRootId: string
+  ): Promise<AnimeEntry | undefined>
 
   searchAnime(query: string): Promise<AnimeMetadata[]>
   overrideMetadata(

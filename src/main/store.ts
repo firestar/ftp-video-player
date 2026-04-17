@@ -1,11 +1,13 @@
 import Store from 'electron-store'
 import { randomUUID } from 'node:crypto'
-import type { FtpServerConfig, LibraryRoot, AnimeMetadata } from '@shared/types'
+import type { AnimeEntry, AnimeMetadata, FtpServerConfig, LibraryRoot, VideoFile } from '@shared/types'
 
 interface Schema {
   servers: FtpServerConfig[]
   libraryRoots: LibraryRoot[]
   metadataByFolder: Record<string, AnimeMetadata>
+  entriesByRoot: Record<string, AnimeEntry[]>
+  videosByFolder: Record<string, VideoFile[]>
 }
 
 const store = new Store<Schema>({
@@ -13,7 +15,9 @@ const store = new Store<Schema>({
   defaults: {
     servers: [],
     libraryRoots: [],
-    metadataByFolder: {}
+    metadataByFolder: {},
+    entriesByRoot: {},
+    videosByFolder: {}
   }
 })
 
@@ -42,6 +46,7 @@ export function upsertServer(input: Omit<FtpServerConfig, 'id'> & { id?: string 
 }
 
 export function removeServer(id: string): void {
+  const removedRoots = store.get('libraryRoots').filter((r) => r.serverId === id)
   store.set(
     'servers',
     store.get('servers').filter((s) => s.id !== id)
@@ -50,6 +55,11 @@ export function removeServer(id: string): void {
     'libraryRoots',
     store.get('libraryRoots').filter((r) => r.serverId !== id)
   )
+  if (removedRoots.length > 0) {
+    const byRoot = store.get('entriesByRoot')
+    for (const r of removedRoots) delete byRoot[r.id]
+    store.set('entriesByRoot', byRoot)
+  }
 }
 
 export function listLibraryRoots(): LibraryRoot[] {
@@ -67,6 +77,11 @@ export function removeLibraryRoot(id: string): void {
     'libraryRoots',
     store.get('libraryRoots').filter((r) => r.id !== id)
   )
+  const byRoot = store.get('entriesByRoot')
+  if (id in byRoot) {
+    delete byRoot[id]
+    store.set('entriesByRoot', byRoot)
+  }
 }
 
 export function cacheMetadata(folderKey: string, metadata: AnimeMetadata): void {
@@ -83,4 +98,35 @@ export function clearCachedMetadata(folderKey: string): void {
   const all = store.get('metadataByFolder')
   delete all[folderKey]
   store.set('metadataByFolder', all)
+}
+
+export function getCachedEntriesForRoot(rootId: string): AnimeEntry[] {
+  return store.get('entriesByRoot')[rootId] ?? []
+}
+
+export function getAllCachedEntries(): AnimeEntry[] {
+  const byRoot = store.get('entriesByRoot')
+  const validRootIds = new Set(store.get('libraryRoots').map((r) => r.id))
+  const out: AnimeEntry[] = []
+  for (const [rootId, entries] of Object.entries(byRoot)) {
+    if (!validRootIds.has(rootId)) continue
+    out.push(...entries)
+  }
+  return out
+}
+
+export function setCachedEntriesForRoot(rootId: string, entries: AnimeEntry[]): void {
+  const all = store.get('entriesByRoot')
+  all[rootId] = entries
+  store.set('entriesByRoot', all)
+}
+
+export function getCachedVideos(folderKey: string): VideoFile[] | undefined {
+  return store.get('videosByFolder')[folderKey]
+}
+
+export function setCachedVideos(folderKey: string, videos: VideoFile[]): void {
+  const all = store.get('videosByFolder')
+  all[folderKey] = videos
+  store.set('videosByFolder', all)
 }

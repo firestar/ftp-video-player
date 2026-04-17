@@ -2,10 +2,23 @@ import { createHash } from 'node:crypto'
 import type { AnimeEntry, LibraryRoot, VideoFile } from '@shared/types'
 import { isVideoFile } from '@shared/types'
 import { createFtpClient } from './ftp/client.js'
-import { getServer, listLibraryRoots } from './store.js'
+import {
+  getAllCachedEntries,
+  getCachedEntriesForRoot,
+  getCachedMetadata,
+  getCachedVideos,
+  getServer,
+  listLibraryRoots,
+  setCachedEntriesForRoot,
+  setCachedVideos
+} from './store.js'
 import { resolveMetadataForFolder } from './anime.js'
 
 function animeId(serverId: string, folderPath: string): string {
+  return createHash('sha1').update(`${serverId}:${folderPath}`).digest('hex')
+}
+
+function folderKey(serverId: string, folderPath: string): string {
   return createHash('sha1').update(`${serverId}:${folderPath}`).digest('hex')
 }
 
@@ -49,7 +62,7 @@ export async function scanLibraryRoot(root: LibraryRoot): Promise<AnimeEntry[]> 
         libraryRootId: root.id,
         folderName: child.name,
         path: child.path,
-        videos: [],
+        videos: getCachedVideos(folderKey(server.id, child.path)) ?? [],
         lastScannedAt: Date.now()
       })
     }
@@ -85,6 +98,91 @@ export async function enrichWithMetadata(entries: AnimeEntry[]): Promise<AnimeEn
   return out
 }
 
+/** All entries already in the local cache, with their cached metadata attached. */
+export function getCachedLibrary(): AnimeEntry[] {
+  return getAllCachedEntries().map((entry) => {
+    const metadata = entry.metadata ?? getCachedMetadata(folderKey(entry.serverId, entry.path))
+    const videos = entry.videos.length > 0
+      ? entry.videos
+      : getCachedVideos(folderKey(entry.serverId, entry.path)) ?? []
+    return { ...entry, metadata, videos }
+  })
+}
+
+/**
+ * Walk every library root, emitting each anime entry as soon as it's
+ * discovered and again once metadata is resolved. Cached metadata is attached
+ * synchronously so the renderer can render immediately even while we're still
+ * fetching from Jikan in the background.
+ */
+export async function scanAllLibrariesStreaming(
+  onItem: (entry: AnimeEntry) => void
+): Promise<void> {
+  const roots = listLibraryRoots()
+
+  for (const root of roots) {
+    let scanned: AnimeEntry[]
+    try {
+      scanned = await scanLibraryRoot(root)
+    } catch (err) {
+      console.error('[library] scan failed for root', root, err)
+      continue
+    }
+
+    const enriched: AnimeEntry[] = []
+    const needsMetadata: AnimeEntry[] = []
+    for (const entry of scanned) {
+      const cachedMetadata = getCachedMetadata(folderKey(entry.serverId, entry.path))
+      const withMeta = { ...entry, metadata: cachedMetadata }
+      enriched.push(withMeta)
+      onItem(withMeta)
+      if (!cachedMetadata) needsMetadata.push(withMeta)
+    }
+
+    setCachedEntriesForRoot(root.id, enriched)
+
+    for (const entry of needsMetadata) {
+      const metadata = await resolveMetadataForFolder(
+        entry.serverId,
+        entry.path,
+        entry.folderName
+      ).catch(() => undefined)
+      if (metadata) {
+        const updated = { ...entry, metadata }
+        const idx = enriched.findIndex((e) => e.id === updated.id)
+        if (idx >= 0) enriched[idx] = updated
+        setCachedEntriesForRoot(root.id, enriched)
+        onItem(updated)
+      }
+    }
+  }
+}
+
+/** Hydrate a single anime entry from local cache only. Returns undefined if
+ *  we have no record of this folder. Used to render the detail view instantly
+ *  before the live FTP listing comes back. */
+export function getCachedAnimeEntry(
+  serverId: string,
+  folderPath: string,
+  libraryRootId: string
+): AnimeEntry | undefined {
+  const cacheKey = folderKey(serverId, folderPath)
+  const cachedVideos = getCachedVideos(cacheKey)
+  const cachedMetadata = getCachedMetadata(cacheKey)
+  if (!cachedVideos && !cachedMetadata) return undefined
+  const folderName = folderPath.split('/').filter(Boolean).pop() ?? folderPath
+  return {
+    id: animeId(serverId, folderPath),
+    serverId,
+    libraryRootId,
+    folderName,
+    path: folderPath,
+    videos: cachedVideos ?? [],
+    metadata: cachedMetadata,
+    lastScannedAt: undefined
+  }
+}
+
 export async function loadAnimeEntry(
   serverId: string,
   folderPath: string,
@@ -93,8 +191,23 @@ export async function loadAnimeEntry(
   const server = getServer(serverId)
   if (!server) return undefined
   const folderName = folderPath.split('/').filter(Boolean).pop() ?? folderPath
-  const videos = await listFolderVideos(serverId, folderPath)
-  const metadata = await resolveMetadataForFolder(serverId, folderPath, folderName).catch(() => undefined)
+  const cacheKey = folderKey(serverId, folderPath)
+  const cachedVideos = getCachedVideos(cacheKey)
+  let videos: VideoFile[]
+  try {
+    videos = await listFolderVideos(serverId, folderPath)
+    setCachedVideos(cacheKey, videos)
+  } catch (err) {
+    if (cachedVideos) {
+      console.warn('[library] using cached videos after live listing failed', err)
+      videos = cachedVideos
+    } else {
+      throw err
+    }
+  }
+  const metadata = await resolveMetadataForFolder(serverId, folderPath, folderName).catch(
+    () => getCachedMetadata(cacheKey)
+  )
   return {
     id: animeId(serverId, folderPath),
     serverId,

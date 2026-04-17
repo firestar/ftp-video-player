@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Api } from '@shared/types'
+import type { AnimeEntry, Api } from '@shared/types'
 
 const api: Api = {
   listServers: () => ipcRenderer.invoke('servers:list'),
@@ -13,8 +13,21 @@ const api: Api = {
   removeLibraryRoot: (id) => ipcRenderer.invoke('libraryRoots:remove', id),
 
   scanLibrary: () => ipcRenderer.invoke('library:scan'),
+  cachedLibrary: () => ipcRenderer.invoke('library:cached'),
+  onLibraryItem: (cb: (entry: AnimeEntry) => void) => {
+    const handler = (_e: unknown, entry: AnimeEntry): void => cb(entry)
+    ipcRenderer.on('library:item', handler)
+    return () => ipcRenderer.removeListener('library:item', handler)
+  },
+  onLibraryDone: (cb: () => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('library:done', handler)
+    return () => ipcRenderer.removeListener('library:done', handler)
+  },
   loadAnime: (serverId, path, libraryRootId) =>
     ipcRenderer.invoke('library:loadAnime', serverId, path, libraryRootId),
+  cachedAnime: (serverId, path, libraryRootId) =>
+    ipcRenderer.invoke('library:cachedAnime', serverId, path, libraryRootId),
 
   searchAnime: (query) => ipcRenderer.invoke('anime:search', query),
   overrideMetadata: (serverId, path, metadata) =>

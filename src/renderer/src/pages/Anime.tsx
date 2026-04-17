@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import type { AnimeEntry, AnimeMetadata, VideoFile, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
+import { useFavorites } from '../favorites'
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -38,6 +39,7 @@ export default function Anime(): JSX.Element {
   const [results, setResults] = useState<AnimeMetadata[] | null>(null)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [progressByPath, setProgressByPath] = useState<Record<string, VideoProgress>>({})
+  const { isFavorite, toggle: toggleFavorite } = useFavorites()
 
   async function refreshProgress(): Promise<void> {
     try {
@@ -136,6 +138,7 @@ export default function Anime(): JSX.Element {
 
   const poster = localFileUrl(entry.metadata?.posterPath)
   const title = entry.metadata?.title ?? entry.folderName
+  const favorited = isFavorite(entry)
 
   return (
     <div className="page">
@@ -150,6 +153,13 @@ export default function Anime(): JSX.Element {
             style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
           />
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <button
+              className={`button${favorited ? '' : ' secondary'}`}
+              onClick={() => void toggleFavorite(entry)}
+              aria-pressed={favorited}
+            >
+              {favorited ? '★ Favorited' : '☆ Add to favorites'}
+            </button>
             <button className="button secondary" onClick={handleSearchMetadata} disabled={searching}>
               {searching ? 'Searching…' : 'Change metadata'}
             </button>

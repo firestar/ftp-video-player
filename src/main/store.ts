@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type {
   AnimeEntry,
   AnimeMetadata,
+  FavoriteFolder,
   FtpServerConfig,
   LibraryRoot,
   VideoFile,
@@ -16,6 +17,7 @@ interface Schema {
   entriesByRoot: Record<string, AnimeEntry[]>
   videosByFolder: Record<string, VideoFile[]>
   progressByVideo: Record<string, VideoProgress>
+  favoriteFolders: FavoriteFolder[]
 }
 
 const store = new Store<Schema>({
@@ -26,7 +28,8 @@ const store = new Store<Schema>({
     metadataByFolder: {},
     entriesByRoot: {},
     videosByFolder: {},
-    progressByVideo: {}
+    progressByVideo: {},
+    favoriteFolders: []
   }
 })
 
@@ -166,4 +169,26 @@ export function flushVideoProgress(): void {
   if (!progressDirty) return
   store.set('progressByVideo', progressCache)
   progressDirty = false
+}
+
+export function listFavoriteFolders(): FavoriteFolder[] {
+  return store.get('favoriteFolders')
+}
+
+export function addFavoriteFolder(input: FavoriteFolder): FavoriteFolder[] {
+  const existing = store.get('favoriteFolders')
+  if (existing.some((f) => f.serverId === input.serverId && f.path === input.path)) {
+    return existing
+  }
+  const next = [...existing, input]
+  store.set('favoriteFolders', next)
+  return next
+}
+
+export function removeFavoriteFolder(serverId: string, path: string): FavoriteFolder[] {
+  const next = store
+    .get('favoriteFolders')
+    .filter((f) => !(f.serverId === serverId && f.path === path))
+  store.set('favoriteFolders', next)
+  return next
 }

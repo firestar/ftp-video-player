@@ -46,7 +46,12 @@ const api: Api = {
     ipcRenderer.invoke('progress:get', serverId, remotePath),
   setVideoProgress: (progress: VideoProgress) => ipcRenderer.send('progress:set', progress),
   listUnfinishedVideos: () => ipcRenderer.invoke('progress:listUnfinished'),
-  listVideoProgress: () => ipcRenderer.invoke('progress:list')
+  listVideoProgress: () => ipcRenderer.invoke('progress:list'),
+
+  listFavoriteFolders: () => ipcRenderer.invoke('favorites:list'),
+  addFavoriteFolder: (input) => ipcRenderer.invoke('favorites:add', input),
+  removeFavoriteFolder: (serverId, path) =>
+    ipcRenderer.invoke('favorites:remove', serverId, path)
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigate } from 'react-router-dom'
 import type { AnimeEntry, LibraryRoot, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
+import { useFavorites } from '../favorites'
 
 type SortKey = 'name' | 'rating' | 'year' | 'episodes' | 'watched' | 'added'
 type SortDir = 'asc' | 'desc'
@@ -72,6 +73,7 @@ export default function Library(): JSX.Element {
   const [selectedGenres, setSelectedGenres] = useState<string[]>(initialFilter.genres)
   const [selectedTags, setSelectedTags] = useState<string[]>(initialFilter.tags)
   const navigate = useNavigate()
+  const { isFavorite, toggle: toggleFavorite } = useFavorites()
 
   useEffect(() => {
     try {
@@ -366,7 +368,13 @@ export default function Library(): JSX.Element {
         <VirtualGrid
           items={filtered}
           getKey={(e) => e.id}
-          renderItem={(entry) => <AnimeCard entry={entry} />}
+          renderItem={(entry) => (
+            <AnimeCard
+              entry={entry}
+              isFavorite={isFavorite(entry)}
+              onToggleFavorite={() => void toggleFavorite(entry)}
+            />
+          )}
         />
       )}
     </div>
@@ -654,7 +662,15 @@ function FilterGroup({
   )
 }
 
-function AnimeCard({ entry }: { entry: AnimeEntry }): JSX.Element {
+export function AnimeCard({
+  entry,
+  isFavorite,
+  onToggleFavorite
+}: {
+  entry: AnimeEntry
+  isFavorite?: boolean
+  onToggleFavorite?: () => void
+}): JSX.Element {
   const navigate = useNavigate()
   const title = entry.metadata?.title ?? entry.folderName
   const poster = localFileUrl(entry.metadata?.posterPath)
@@ -674,6 +690,20 @@ function AnimeCard({ entry }: { entry: AnimeEntry }): JSX.Element {
         style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
       >
         {!poster && <div className="card-poster-placeholder">🎬</div>}
+        {onToggleFavorite && (
+          <button
+            type="button"
+            className={`favorite-button${isFavorite ? ' active' : ''}`}
+            aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            title={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleFavorite()
+            }}
+          >
+            {isFavorite ? '★' : '☆'}
+          </button>
+        )}
       </div>
       <div className="card-body">
         <div className="card-title">{title}</div>
@@ -686,3 +716,5 @@ function AnimeCard({ entry }: { entry: AnimeEntry }): JSX.Element {
     </div>
   )
 }
+
+export { VirtualGrid }

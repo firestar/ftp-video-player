@@ -44,6 +44,15 @@ a {
   display: grid;
   grid-template-columns: 220px 1fr;
   height: 100vh;
+  transition: grid-template-columns 0.25s ease;
+}
+
+body.video-playing .app {
+  grid-template-columns: 0 1fr;
+}
+
+body.video-playing .sidebar {
+  display: none;
 }
 
 .sidebar {

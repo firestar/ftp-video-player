@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import type { AnimeEntry, AnimeMetadata, VideoFile } from '@shared/types'
+import type { AnimeEntry, AnimeMetadata, VideoFile, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
 
 function formatSize(bytes: number): string {
@@ -8,6 +8,19 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+// Format a duration in seconds as "1h 2m 3s", omitting any unit whose value is 0.
+export function formatWatchedTime(totalSeconds: number): string {
+  const total = Math.max(0, Math.floor(totalSeconds))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const parts: string[] = []
+  if (h > 0) parts.push(`${h}h`)
+  if (m > 0) parts.push(`${m}m`)
+  if (s > 0) parts.push(`${s}s`)
+  return parts.length === 0 ? '0s' : parts.join(' ')
 }
 
 export default function Anime(): JSX.Element {
@@ -24,6 +37,18 @@ export default function Anime(): JSX.Element {
   const [searching, setSearching] = useState(false)
   const [results, setResults] = useState<AnimeMetadata[] | null>(null)
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  const [progressByPath, setProgressByPath] = useState<Record<string, VideoProgress>>({})
+
+  async function refreshProgress(): Promise<void> {
+    try {
+      const list = await api.listVideoProgress()
+      const byPath: Record<string, VideoProgress> = {}
+      for (const p of list) if (p.serverId === serverId) byPath[p.path] = p
+      setProgressByPath(byPath)
+    } catch {
+      // ignore
+    }
+  }
 
   async function load(): Promise<void> {
     setError(null)
@@ -45,6 +70,7 @@ export default function Anime(): JSX.Element {
 
   useEffect(() => {
     void load()
+    void refreshProgress()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, folderPath, libraryRootId])
 
@@ -80,11 +106,15 @@ export default function Anime(): JSX.Element {
   }
 
   function handlePlay(video: VideoFile): void {
+    const animeTitle = entry?.metadata?.title ?? entry?.folderName ?? video.name
+    const poster = entry?.metadata?.posterPath
     const q = new URLSearchParams({
       path: video.path,
       size: String(video.size),
-      title: video.name
+      title: video.name,
+      animeTitle
     })
+    if (poster) q.set('poster', poster)
     navigate(`/player/${encodeURIComponent(serverId)}?${q.toString()}`)
   }
 
@@ -151,6 +181,12 @@ export default function Anime(): JSX.Element {
           <div className="episode-list">
             {entry.videos.map((video) => {
               const thumb = localFileUrl(thumbs[video.path])
+              const progress = progressByPath[video.path]
+              const watchedRatio =
+                progress && progress.durationSeconds > 0
+                  ? progress.positionSeconds / progress.durationSeconds
+                  : 0
+              const finished = watchedRatio >= 0.85
               return (
                 <div key={video.path} className="episode" onClick={() => handlePlay(video)}>
                   <div
@@ -158,12 +194,32 @@ export default function Anime(): JSX.Element {
                     style={thumb ? { backgroundImage: `url("${thumb}")` } : undefined}
                   >
                     {!thumb && <span>Generating…</span>}
+                    {progress && watchedRatio > 0 && (
+                      <div className="episode-progress">
+                        <div
+                          className="episode-progress-bar"
+                          style={{ width: `${Math.min(100, watchedRatio * 100)}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div className="episode-title">{video.name}</div>
-                    <div className="episode-meta">{formatSize(video.size)}</div>
+                    <div className="episode-meta">
+                      {formatSize(video.size)}
+                      {progress && (
+                        <>
+                          {' · '}
+                          {finished
+                            ? 'Watched'
+                            : `Last at ${formatWatchedTime(progress.positionSeconds)}`}
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <button className="button">Play</button>
+                  <button className="button">
+                    {progress && !finished ? 'Resume' : 'Play'}
+                  </button>
                 </div>
               )
             })}

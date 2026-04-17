@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AnimeEntry, Api } from '@shared/types'
+import type { AnimeEntry, Api, VideoProgress } from '@shared/types'
 
 const api: Api = {
   listServers: () => ipcRenderer.invoke('servers:list'),
@@ -40,7 +40,13 @@ const api: Api = {
 
   registerStream: (serverId, remotePath, size) =>
     ipcRenderer.invoke('stream:register', serverId, remotePath, size),
-  unregisterStream: (token) => ipcRenderer.invoke('stream:unregister', token)
+  unregisterStream: (token) => ipcRenderer.invoke('stream:unregister', token),
+
+  getVideoProgress: (serverId, remotePath) =>
+    ipcRenderer.invoke('progress:get', serverId, remotePath),
+  setVideoProgress: (progress: VideoProgress) => ipcRenderer.send('progress:set', progress),
+  listUnfinishedVideos: () => ipcRenderer.invoke('progress:listUnfinished'),
+  listVideoProgress: () => ipcRenderer.invoke('progress:list')
 }
 
 contextBridge.exposeInMainWorld('api', api)

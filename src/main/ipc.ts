@@ -4,15 +4,19 @@ import type {
   ConnectionTestResult,
   FtpServerConfig,
   LibraryRoot,
-  RemoteEntry
+  RemoteEntry,
+  VideoProgress
 } from '@shared/types'
 import {
   addLibraryRoot,
   getServer,
+  getVideoProgress,
   listLibraryRoots,
   listServers,
+  listVideoProgress,
   removeLibraryRoot,
   removeServer,
+  setVideoProgress,
   upsertServer
 } from './store.js'
 import { createFtpClient } from './ftp/client.js'
@@ -127,4 +131,27 @@ export function registerIpcHandlers(): void {
   )
 
   ipcMain.handle('stream:unregister', (_e, token: string) => unregisterStream(token))
+
+  ipcMain.handle('progress:get', (_e, serverId: string, remotePath: string) =>
+    getVideoProgress(serverId, remotePath)
+  )
+
+  // Fire-and-forget channel because the renderer calls this ~100x/sec.
+  ipcMain.on('progress:set', (_e, progress: VideoProgress) => {
+    if (progress && typeof progress.positionSeconds === 'number') {
+      setVideoProgress(progress)
+    }
+  })
+
+  ipcMain.handle('progress:list', () => listVideoProgress())
+
+  ipcMain.handle('progress:listUnfinished', () => {
+    return listVideoProgress()
+      .filter((p) => {
+        if (!p.durationSeconds || p.durationSeconds <= 0) return p.positionSeconds > 5
+        const ratio = p.positionSeconds / p.durationSeconds
+        return ratio > 0.005 && ratio < 0.85
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  })
 }

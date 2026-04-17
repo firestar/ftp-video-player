@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useNavigate } from 'react-router-dom'
 import type { AnimeEntry, LibraryRoot, VideoProgress } from '@shared/types'
 import { api, localFileUrl } from '../api'
-import { formatWatchedTime } from './Anime'
 
 type SortKey = 'name' | 'rating' | 'year' | 'episodes' | 'watched' | 'added'
 type SortDir = 'asc' | 'desc'
@@ -65,7 +64,6 @@ export default function Library(): JSX.Element {
   const [roots, setRoots] = useState<LibraryRoot[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
-  const [unfinished, setUnfinished] = useState<VideoProgress[]>([])
   const [allProgress, setAllProgress] = useState<VideoProgress[]>([])
   const initialSort = loadSortPref()
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.sortKey)
@@ -94,13 +92,9 @@ export default function Library(): JSX.Element {
     }
   }, [selectedGenres, selectedTags])
 
-  async function refreshUnfinished(): Promise<void> {
+  async function refreshProgress(): Promise<void> {
     try {
-      const [unf, all] = await Promise.all([
-        api.listUnfinishedVideos(),
-        api.listVideoProgress()
-      ])
-      setUnfinished(unf)
+      const all = await api.listVideoProgress()
       setAllProgress(all)
     } catch (err) {
       console.error(err)
@@ -142,13 +136,11 @@ export default function Library(): JSX.Element {
         setHasLoadedCache(true)
       }
       void refresh()
-      void refreshUnfinished()
+      void refreshProgress()
     })()
 
-    // Keep the sidebar fresh while the user is browsing so positions from
-    // another window / a just-closed player show up quickly.
-    const poll = window.setInterval(refreshUnfinished, 4000)
-    const onFocus = (): void => void refreshUnfinished()
+    const poll = window.setInterval(refreshProgress, 4000)
+    const onFocus = (): void => void refreshProgress()
     window.addEventListener('focus', onFocus)
 
     return () => {
@@ -289,98 +281,94 @@ export default function Library(): JSX.Element {
   const hasNoRoots = roots.length === 0
 
   return (
-    <div className="page library-page">
-      <div className="library-main">
-        <div className="page-header">
-          <h1>Library</h1>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <input
-              placeholder="Search…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '8px 12px',
-                color: 'var(--text)',
-                outline: 'none',
-                minWidth: 220
-              }}
-            />
-            <select
-              aria-label="Sort by"
-              value={sortKey}
-              onChange={(e) => {
-                const next = e.target.value as SortKey
-                setSortKey(next)
-                setSortDir(DEFAULT_DIR[next])
-              }}
-              style={{
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                padding: '8px 10px',
-                color: 'var(--text)',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.key} value={o.key}>
-                  Sort: {o.label}
-                </option>
-              ))}
-            </select>
-            <button
-              className="button secondary"
-              onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-              title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-              aria-label={`Toggle sort direction (currently ${sortDir === 'asc' ? 'ascending' : 'descending'})`}
-              style={{ padding: '8px 12px' }}
-            >
-              {sortDir === 'asc' ? '↑' : '↓'}
-            </button>
-            <button className="button secondary" onClick={refresh} disabled={loading}>
-              {loading ? 'Scanning…' : 'Rescan'}
-            </button>
-          </div>
-        </div>
-
-        <FilterBar
-          availableGenres={availableGenres}
-          availableTags={availableTags}
-          selectedGenres={selectedGenres}
-          selectedTags={selectedTags}
-          onToggleGenre={toggleGenre}
-          onToggleTag={toggleTag}
-          onClear={clearFilters}
-        />
-
-        {hasNoRoots && entries.length === 0 && (
-          <div className="empty">
-            No library folders yet.{' '}
-            <a onClick={() => navigate('/servers')}>Add a server</a> and point it at a folder like
-            <code> /Anime/Movies</code>.
-          </div>
-        )}
-
-        {!hasNoRoots && filtered.length === 0 && (
-          <div className="empty">
-            {loading ? 'Fetching metadata…' : 'No anime found in the configured folders.'}
-          </div>
-        )}
-
-        {filtered.length > 0 && (
-          <VirtualGrid
-            items={filtered}
-            getKey={(e) => e.id}
-            renderItem={(entry) => <AnimeCard entry={entry} />}
+    <div className="page">
+      <div className="page-header">
+        <h1>Library</h1>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <input
+            placeholder="Search…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '8px 12px',
+              color: 'var(--text)',
+              outline: 'none',
+              minWidth: 220
+            }}
           />
-        )}
+          <select
+            aria-label="Sort by"
+            value={sortKey}
+            onChange={(e) => {
+              const next = e.target.value as SortKey
+              setSortKey(next)
+              setSortDir(DEFAULT_DIR[next])
+            }}
+            style={{
+              background: 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              padding: '8px 10px',
+              color: 'var(--text)',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                Sort: {o.label}
+              </option>
+            ))}
+          </select>
+          <button
+            className="button secondary"
+            onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+            aria-label={`Toggle sort direction (currently ${sortDir === 'asc' ? 'ascending' : 'descending'})`}
+            style={{ padding: '8px 12px' }}
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+          <button className="button secondary" onClick={refresh} disabled={loading}>
+            {loading ? 'Scanning…' : 'Rescan'}
+          </button>
+        </div>
       </div>
 
-      <ContinueWatching items={unfinished} />
+      <FilterBar
+        availableGenres={availableGenres}
+        availableTags={availableTags}
+        selectedGenres={selectedGenres}
+        selectedTags={selectedTags}
+        onToggleGenre={toggleGenre}
+        onToggleTag={toggleTag}
+        onClear={clearFilters}
+      />
+
+      {hasNoRoots && entries.length === 0 && (
+        <div className="empty">
+          No library folders yet.{' '}
+          <a onClick={() => navigate('/servers')}>Add a server</a> and point it at a folder like
+          <code> /Anime/Movies</code>.
+        </div>
+      )}
+
+      {!hasNoRoots && filtered.length === 0 && (
+        <div className="empty">
+          {loading ? 'Fetching metadata…' : 'No anime found in the configured folders.'}
+        </div>
+      )}
+
+      {filtered.length > 0 && (
+        <VirtualGrid
+          items={filtered}
+          getKey={(e) => e.id}
+          renderItem={(entry) => <AnimeCard entry={entry} />}
+        />
+      )}
     </div>
   )
 }
@@ -536,64 +524,6 @@ function VirtualGrid<T>({
         </div>
       ))}
     </div>
-  )
-}
-
-function ContinueWatching({ items }: { items: VideoProgress[] }): JSX.Element {
-  const navigate = useNavigate()
-
-  function play(p: VideoProgress): void {
-    const q = new URLSearchParams({
-      path: p.path,
-      size: String(p.size),
-      title: p.videoName,
-      animeTitle: p.animeTitle
-    })
-    if (p.posterPath) q.set('poster', p.posterPath)
-    navigate(`/player/${encodeURIComponent(p.serverId)}?${q.toString()}`)
-  }
-
-  return (
-    <aside className="continue-side">
-      <h3>Continue Watching</h3>
-      {items.length === 0 && (
-        <div className="continue-empty">Nothing in progress yet.</div>
-      )}
-      <div className="continue-list">
-        {items.map((p) => {
-          const poster = localFileUrl(p.posterPath)
-          const ratio =
-            p.durationSeconds > 0
-              ? Math.min(100, (p.positionSeconds / p.durationSeconds) * 100)
-              : 0
-          return (
-            <div
-              key={`${p.serverId}::${p.path}`}
-              className="continue-item"
-              onClick={() => play(p)}
-            >
-              <div
-                className="continue-poster"
-                style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
-              >
-                {!poster && <span>🎬</span>}
-              </div>
-              <div className="continue-body">
-                <div className="continue-title">{p.animeTitle}</div>
-                <div className="continue-episode">{p.videoName}</div>
-                <div className="continue-meta">
-                  {formatWatchedTime(p.positionSeconds)}
-                  {p.durationSeconds > 0 ? ` / ${formatWatchedTime(p.durationSeconds)}` : ''}
-                </div>
-                <div className="continue-progress">
-                  <div className="continue-progress-bar" style={{ width: `${ratio}%` }} />
-                </div>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </aside>
   )
 }
 

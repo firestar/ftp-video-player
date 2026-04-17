@@ -98,8 +98,11 @@ toggle lets the user switch manually. If direct playback errors on an
 unsupported codec mid-session, the player falls back to transcode
 automatically.
 
-Embedded subtitle tracks (SRT, ASS/SSA, PGS via `ffmpeg`'s WebVTT muxer) are
-exposed through the Video.js captions menu.
+Embedded text subtitle tracks (SRT, ASS/SSA, mov_text, etc.) are converted to
+WebVTT on the fly and exposed through the Video.js captions menu. Bitmap
+formats (PGS, DVD, DVB) can't be served as WebVTT and are hidden from the
+menu; they require burn-in via the transcode endpoint (`?sub=<streamIndex>`)
+to be visible.
 
 ## Caches
 

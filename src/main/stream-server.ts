@@ -14,6 +14,24 @@ interface Registration {
   serverId: string
   path: string
   size: number
+  /** Populated by /probe; maps stream index → ffprobe codec_name. */
+  subtitleCodecs?: Map<number, string>
+}
+
+const TEXT_SUBTITLE_CODECS = new Set([
+  'subrip',
+  'srt',
+  'ass',
+  'ssa',
+  'webvtt',
+  'mov_text',
+  'tx3g',
+  'text',
+  'microdvd'
+])
+
+function isTextSubtitle(codec: string | undefined): boolean {
+  return !!codec && TEXT_SUBTITLE_CODECS.has(codec.toLowerCase())
 }
 
 const registrations = new Map<string, Registration>()
@@ -248,15 +266,23 @@ async function handleProbe(
     const streams = parsed.streams ?? []
     const video = streams.find((s) => s.codec_type === 'video')
     const audio = streams.find((s) => s.codec_type === 'audio')
-    const subtitles: SubtitleTrackInfo[] = streams
-      .filter((s) => s.codec_type === 'subtitle')
-      .map((s) => ({
-        index: s.index,
-        codec: s.codec_name ?? 'unknown',
-        language: s.tags?.language,
-        title: s.tags?.title,
-        isDefault: s.disposition?.default === 1
-      }))
+    const subtitleStreams = streams.filter((s) => s.codec_type === 'subtitle')
+    const subtitles: SubtitleTrackInfo[] = subtitleStreams.map((s) => ({
+      index: s.index,
+      codec: s.codec_name ?? 'unknown',
+      language: s.tags?.language,
+      title: s.tags?.title,
+      isDefault: s.disposition?.default === 1,
+      textBased: isTextSubtitle(s.codec_name)
+    }))
+
+    // Cache codec_name per stream index so /subtitle and /transcode can decide
+    // how to handle each track without re-probing.
+    const codecMap = new Map<number, string>()
+    for (const s of subtitleStreams) {
+      if (s.codec_name) codecMap.set(s.index, s.codec_name)
+    }
+    reg.subtitleCodecs = codecMap
 
     const result: ProbeResult = {
       container: parsed.format?.format_name,
@@ -318,14 +344,36 @@ async function handleTranscode(
 
   // Stream mapping: take the first video + audio streams. If a subtitle index
   // was requested we burn it in, otherwise the renderer overlays external VTT.
+  // The `sub` query param is the GLOBAL ffprobe stream index; ffmpeg's filters
+  // want a subtitle-relative index (0 = first sub stream), so we resolve that
+  // here using the codec cache populated by /probe.
+  let burnedIn = false
   if (subIndex !== null && subIndex !== '' && /^\d+$/.test(subIndex)) {
-    args.push(
-      '-filter_complex',
-      `[0:v][0:s:${subIndex}]overlay[v]`,
-      '-map', '[v]',
-      '-map', '0:a:0?'
-    )
-  } else {
+    const globalIdx = Number(subIndex)
+    const codec = await getSubtitleCodec(reg, globalIdx)
+    const subIndices = [...(reg.subtitleCodecs?.keys() ?? [])].sort((a, b) => a - b)
+    const relIdx = subIndices.indexOf(globalIdx)
+    if (relIdx >= 0) {
+      if (isTextSubtitle(codec)) {
+        // For text subs, the `subtitles` filter renders ASS/SRT to video.
+        // Colons and other punctuation in the input URL must be escaped for
+        // the filter parser.
+        const escaped = selfUrl(token).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'")
+        args.push('-vf', `subtitles='${escaped}':si=${relIdx}`, '-map', '0:v:0', '-map', '0:a:0?')
+      } else {
+        // Bitmap subs (PGS/DVD/DVB) decode to image frames; overlay composites
+        // them on the primary video.
+        args.push(
+          '-filter_complex',
+          `[0:v][0:s:${relIdx}]overlay[v]`,
+          '-map', '[v]',
+          '-map', '0:a:0?'
+        )
+      }
+      burnedIn = true
+    }
+  }
+  if (!burnedIn) {
     args.push('-map', '0:v:0', '-map', '0:a:0?')
   }
 
@@ -385,6 +433,51 @@ async function handleTranscode(
 }
 
 /**
+ * Look up the ffprobe codec_name for a subtitle stream. Uses the cache
+ * populated by /probe; if the cache is empty (renderer hit /subtitle first),
+ * runs a minimal ffprobe to populate it.
+ */
+async function getSubtitleCodec(
+  reg: Registration,
+  streamIndex: number
+): Promise<string | undefined> {
+  if (reg.subtitleCodecs?.has(streamIndex)) {
+    return reg.subtitleCodecs.get(streamIndex)
+  }
+  if (!ffprobePath) return undefined
+  const codecs = await new Promise<Map<number, string>>((resolve) => {
+    const proc = spawn(ffprobePath, [
+      '-v', 'error',
+      '-print_format', 'json',
+      '-show_streams',
+      '-select_streams', 's',
+      selfUrl(reg.token)
+    ])
+    let stdout = ''
+    proc.stdout.on('data', (chunk) => {
+      stdout += chunk.toString('utf8')
+    })
+    proc.on('error', () => resolve(new Map()))
+    proc.on('close', () => {
+      const map = new Map<number, string>()
+      try {
+        const parsed = JSON.parse(stdout) as {
+          streams?: Array<{ index: number; codec_name?: string }>
+        }
+        for (const s of parsed.streams ?? []) {
+          if (s.codec_name) map.set(s.index, s.codec_name)
+        }
+      } catch {
+        // ignore
+      }
+      resolve(map)
+    })
+  })
+  reg.subtitleCodecs = codecs
+  return codecs.get(streamIndex)
+}
+
+/**
  * Extract a single embedded subtitle track and serve it as WebVTT. The track
  * index refers to the stream index reported by /probe.
  */
@@ -412,6 +505,17 @@ async function handleSubtitle(
     return
   }
 
+  // WebVTT is text-only — bitmap formats (PGS/DVD/DVB/XSUB) can't be encoded
+  // to it. Refuse before sending headers so the browser sees a real error
+  // instead of a 200 OK with an empty/invalid WebVTT body.
+  const codec = await getSubtitleCodec(reg, streamIndex)
+  if (!isTextSubtitle(codec)) {
+    res.statusCode = 415
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+    res.end(`subtitle codec ${codec ?? 'unknown'} cannot be served as WebVTT`)
+    return
+  }
+
   res.setHeader('Content-Type', 'text/vtt; charset=utf-8')
   res.setHeader('Cache-Control', 'no-store')
   res.statusCode = 200
@@ -427,6 +531,7 @@ async function handleSubtitle(
   ]
 
   const proc = spawn(ffmpegPath, args)
+  let bytesWritten = 0
   let cleaned = false
   const cleanup = (): void => {
     if (cleaned) return
@@ -448,10 +553,17 @@ async function handleSubtitle(
       res.destroy()
     }
   })
-  proc.on('close', () => {
-    res.end()
+  proc.on('close', (code) => {
+    if (code !== 0 && bytesWritten === 0 && !res.headersSent) {
+      res.statusCode = 500
+      res.end('subtitle conversion failed')
+    }
+    // proc.stdout.pipe(res) ends res when stdout ends; nothing more to do.
   })
 
+  proc.stdout.on('data', (chunk: Buffer) => {
+    bytesWritten += chunk.length
+  })
   proc.stdout.pipe(res)
   proc.stderr.on('data', (chunk: Buffer) => {
     const msg = chunk.toString('utf8').trim()

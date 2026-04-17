@@ -3,6 +3,22 @@ import { Readable } from 'node:stream'
 import type { FtpServerConfig, RemoteEntry } from '@shared/types'
 import type { IFtpClient, RangeStreamOptions } from './client.js'
 
+// ssh2-sftp-client surfaces underlying socket failures with messages like
+// these when the control channel drops mid-operation.
+const TRANSIENT_SFTP_ERROR_PATTERNS = [
+  /ECONNRESET/i,
+  /socket hang up/i,
+  /Not connected/i,
+  /Connection lost/i,
+  /closed by remote host/i,
+  /ETIMEDOUT/i
+]
+
+function isTransientSftpError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return TRANSIENT_SFTP_ERROR_PATTERNS.some((re) => re.test(msg))
+}
+
 export class SftpClient implements IFtpClient {
   private client: SftpClientLib
   private connected = false
@@ -26,26 +42,55 @@ export class SftpClient implements IFtpClient {
 
   async disconnect(): Promise<void> {
     if (!this.connected) return
-    await this.client.end()
+    try {
+      await this.client.end()
+    } catch {
+      // ssh2-sftp-client throws if the socket is already torn down.
+    }
     this.connected = false
   }
 
+  private async reset(): Promise<void> {
+    try {
+      await this.client.end()
+    } catch {
+      // ignore — the socket is likely already gone.
+    }
+    this.connected = false
+    this.client = new SftpClientLib()
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+
+  private async withRetry<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op()
+    } catch (err) {
+      if (!isTransientSftpError(err)) throw err
+      await this.reset()
+      return op()
+    }
+  }
+
   async list(path: string): Promise<RemoteEntry[]> {
-    await this.connect()
-    const items = await this.client.list(path)
-    return items.map((i) => ({
-      name: i.name,
-      path: joinPath(path, i.name),
-      type: i.type === 'd' ? 'directory' : 'file',
-      size: i.size,
-      modifiedAt: typeof i.modifyTime === 'number' ? i.modifyTime : undefined
-    }))
+    return this.withRetry(async () => {
+      await this.connect()
+      const items = await this.client.list(path)
+      return items.map((i) => ({
+        name: i.name,
+        path: joinPath(path, i.name),
+        type: i.type === 'd' ? 'directory' : 'file',
+        size: i.size,
+        modifiedAt: typeof i.modifyTime === 'number' ? i.modifyTime : undefined
+      }))
+    })
   }
 
   async size(path: string): Promise<number> {
-    await this.connect()
-    const stat = await this.client.stat(path)
-    return stat.size
+    return this.withRetry(async () => {
+      await this.connect()
+      const stat = await this.client.stat(path)
+      return stat.size
+    })
   }
 
   async downloadToFile(remotePath: string, localPath: string): Promise<void> {

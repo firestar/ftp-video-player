@@ -49,6 +49,8 @@ export interface AnimeMetadata {
   episodes?: number
   type?: string
   genres?: string[]
+  /** Additional classification labels (Jikan themes + demographics). */
+  tags?: string[]
   imageUrl?: string
   posterPath?: string
 }

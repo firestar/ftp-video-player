@@ -25,6 +25,7 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 }
 
 const SORT_STORAGE_KEY = 'library:sort'
+const FILTER_STORAGE_KEY = 'library:filter'
 
 function loadSortPref(): { sortKey: SortKey; sortDir: SortDir } {
   try {
@@ -41,6 +42,22 @@ function loadSortPref(): { sortKey: SortKey; sortDir: SortDir } {
   return { sortKey: 'name', sortDir: 'asc' }
 }
 
+function loadFilterPref(): { genres: string[]; tags: string[] } {
+  try {
+    const raw = localStorage.getItem(FILTER_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { genres?: string[]; tags?: string[] }
+      return {
+        genres: Array.isArray(parsed.genres) ? parsed.genres : [],
+        tags: Array.isArray(parsed.tags) ? parsed.tags : []
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return { genres: [], tags: [] }
+}
+
 export default function Library(): JSX.Element {
   const [entriesById, setEntriesById] = useState<Record<string, AnimeEntry>>({})
   const [hasLoadedCache, setHasLoadedCache] = useState(false)
@@ -51,6 +68,9 @@ export default function Library(): JSX.Element {
   const initialSort = loadSortPref()
   const [sortKey, setSortKey] = useState<SortKey>(initialSort.sortKey)
   const [sortDir, setSortDir] = useState<SortDir>(initialSort.sortDir)
+  const initialFilter = loadFilterPref()
+  const [selectedGenres, setSelectedGenres] = useState<string[]>(initialFilter.genres)
+  const [selectedTags, setSelectedTags] = useState<string[]>(initialFilter.tags)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -60,6 +80,17 @@ export default function Library(): JSX.Element {
       // ignore
     }
   }, [sortKey, sortDir])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        FILTER_STORAGE_KEY,
+        JSON.stringify({ genres: selectedGenres, tags: selectedTags })
+      )
+    } catch {
+      // ignore
+    }
+  }, [selectedGenres, selectedTags])
 
   async function refreshProgress(): Promise<void> {
     try {
@@ -186,14 +217,58 @@ export default function Library(): JSX.Element {
     return list
   }, [entriesById, sortKey, sortDir, latestWatchedByEntry])
 
+  const { availableGenres, availableTags } = useMemo(() => {
+    const genres = new Set<string>()
+    const tags = new Set<string>()
+    for (const e of Object.values(entriesById)) {
+      for (const g of e.metadata?.genres ?? []) genres.add(g)
+      for (const t of e.metadata?.tags ?? []) tags.add(t)
+    }
+    return {
+      availableGenres: Array.from(genres).sort((a, b) => a.localeCompare(b)),
+      availableTags: Array.from(tags).sort((a, b) => a.localeCompare(b))
+    }
+  }, [entriesById])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return entries
+    const hasQuery = q.length > 0
+    const hasGenreFilter = selectedGenres.length > 0
+    const hasTagFilter = selectedTags.length > 0
+    if (!hasQuery && !hasGenreFilter && !hasTagFilter) return entries
     return entries.filter((e) => {
-      const title = (e.metadata?.title ?? e.folderName).toLowerCase()
-      return title.includes(q) || e.folderName.toLowerCase().includes(q)
+      if (hasQuery) {
+        const title = (e.metadata?.title ?? e.folderName).toLowerCase()
+        if (!title.includes(q) && !e.folderName.toLowerCase().includes(q)) return false
+      }
+      if (hasGenreFilter) {
+        const genres = e.metadata?.genres ?? []
+        if (!selectedGenres.every((g) => genres.includes(g))) return false
+      }
+      if (hasTagFilter) {
+        const tags = e.metadata?.tags ?? []
+        if (!selectedTags.every((t) => tags.includes(t))) return false
+      }
+      return true
     })
-  }, [entries, query])
+  }, [entries, query, selectedGenres, selectedTags])
+
+  function toggleGenre(genre: string): void {
+    setSelectedGenres((prev) =>
+      prev.includes(genre) ? prev.filter((g) => g !== genre) : [...prev, genre]
+    )
+  }
+
+  function toggleTag(tag: string): void {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+    )
+  }
+
+  function clearFilters(): void {
+    setSelectedGenres([])
+    setSelectedTags([])
+  }
 
   if (!hasLoadedCache) {
     return (
@@ -262,6 +337,16 @@ export default function Library(): JSX.Element {
           </button>
         </div>
       </div>
+
+      <FilterBar
+        availableGenres={availableGenres}
+        availableTags={availableTags}
+        selectedGenres={selectedGenres}
+        selectedTags={selectedTags}
+        onToggleGenre={toggleGenre}
+        onToggleTag={toggleTag}
+        onClear={clearFilters}
+      />
 
       {hasNoRoots && entries.length === 0 && (
         <div className="empty">
@@ -438,6 +523,133 @@ function VirtualGrid<T>({
           {renderItem(item)}
         </div>
       ))}
+    </div>
+  )
+}
+
+function FilterBar({
+  availableGenres,
+  availableTags,
+  selectedGenres,
+  selectedTags,
+  onToggleGenre,
+  onToggleTag,
+  onClear
+}: {
+  availableGenres: string[]
+  availableTags: string[]
+  selectedGenres: string[]
+  selectedTags: string[]
+  onToggleGenre: (g: string) => void
+  onToggleTag: (t: string) => void
+  onClear: () => void
+}): JSX.Element | null {
+  if (availableGenres.length === 0 && availableTags.length === 0) return null
+  const hasActive = selectedGenres.length > 0 || selectedTags.length > 0
+  return (
+    <div className="filter-bar">
+      {availableGenres.length > 0 && (
+        <FilterGroup
+          label="Genre"
+          options={availableGenres}
+          selected={selectedGenres}
+          onToggle={onToggleGenre}
+        />
+      )}
+      {availableTags.length > 0 && (
+        <FilterGroup
+          label="Tag"
+          options={availableTags}
+          selected={selectedTags}
+          onToggle={onToggleTag}
+        />
+      )}
+      {hasActive && (
+        <button className="filter-clear" onClick={onClear} type="button">
+          Clear filters
+        </button>
+      )}
+    </div>
+  )
+}
+
+function FilterGroup({
+  label,
+  options,
+  selected,
+  onToggle
+}: {
+  label: string
+  options: string[]
+  selected: string[]
+  onToggle: (value: string) => void
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(ev: MouseEvent): void {
+      if (!containerRef.current) return
+      if (!containerRef.current.contains(ev.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [open])
+
+  const summary =
+    selected.length === 0
+      ? `All ${label.toLowerCase()}s`
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} ${label.toLowerCase()}s`
+
+  return (
+    <div className="filter-group" ref={containerRef}>
+      <button
+        type="button"
+        className={`filter-trigger${selected.length > 0 ? ' active' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span className="filter-trigger-label">{label}:</span>
+        <span className="filter-trigger-value">{summary}</span>
+        <span className="filter-trigger-caret">▾</span>
+      </button>
+      {open && (
+        <div className="filter-menu" role="listbox">
+          {options.map((opt) => {
+            const checked = selected.includes(opt)
+            return (
+              <label key={opt} className={`filter-option${checked ? ' checked' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => onToggle(opt)}
+                />
+                <span>{opt}</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div className="filter-chips">
+          {selected.map((v) => (
+            <button
+              key={v}
+              type="button"
+              className="filter-chip"
+              onClick={() => onToggle(v)}
+              title="Remove filter"
+            >
+              {v}
+              <span className="filter-chip-x">×</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

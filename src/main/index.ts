@@ -5,6 +5,7 @@ import { stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { registerIpcHandlers } from './ipc.js'
 import { startStreamServer, stopStreamServer } from './stream-server.js'
+import { flushVideoProgress } from './store.js'
 
 const IMAGE_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -85,6 +86,9 @@ app.whenReady().then(async () => {
   await startStreamServer()
   registerIpcHandlers()
 
+  // Persist buffered playback progress to disk at a modest cadence.
+  setInterval(flushVideoProgress, 1000)
+
   createWindow()
 
   app.on('activate', () => {
@@ -94,5 +98,10 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   stopStreamServer()
+  flushVideoProgress()
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  flushVideoProgress()
 })

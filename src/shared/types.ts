@@ -106,6 +106,18 @@ export interface ConnectionTestResult {
   error?: string
 }
 
+export interface VideoProgress {
+  serverId: string
+  path: string
+  size: number
+  positionSeconds: number
+  durationSeconds: number
+  updatedAt: number
+  videoName: string
+  animeTitle: string
+  posterPath?: string
+}
+
 export type VideoExtension = '.mkv' | '.mp4' | '.avi' | '.mov' | '.webm' | '.m4v' | '.ts' | '.wmv' | '.flv'
 
 export const VIDEO_EXTENSIONS: VideoExtension[] = [
@@ -167,4 +179,9 @@ export interface Api {
 
   registerStream(serverId: string, remotePath: string, size: number): Promise<StreamHandle>
   unregisterStream(token: string): Promise<void>
+
+  getVideoProgress(serverId: string, remotePath: string): Promise<VideoProgress | undefined>
+  setVideoProgress(progress: VideoProgress): void
+  listUnfinishedVideos(): Promise<VideoProgress[]>
+  listVideoProgress(): Promise<VideoProgress[]>
 }

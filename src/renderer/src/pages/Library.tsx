@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { AnimeEntry, LibraryRoot } from '@shared/types'
 import { api, localFileUrl } from '../api'
@@ -121,11 +121,167 @@ export default function Library(): JSX.Element {
         </div>
       )}
 
-      <div className="grid">
-        {filtered.map((entry) => (
-          <AnimeCard key={entry.id} entry={entry} />
-        ))}
-      </div>
+      {filtered.length > 0 && (
+        <VirtualGrid
+          items={filtered}
+          getKey={(e) => e.id}
+          renderItem={(entry) => <AnimeCard entry={entry} />}
+        />
+      )}
+    </div>
+  )
+}
+
+function VirtualGrid<T>({
+  items,
+  getKey,
+  renderItem,
+  minColumnWidth = 180,
+  gap = 20,
+  overscanRows = 2,
+  pageSize = 60
+}: {
+  items: T[]
+  getKey: (item: T) => string
+  renderItem: (item: T) => JSX.Element
+  minColumnWidth?: number
+  gap?: number
+  overscanRows?: number
+  pageSize?: number
+}): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [scrollParent, setScrollParent] = useState<HTMLElement | null>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  const [measuredRowHeight, setMeasuredRowHeight] = useState<number | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
+  const [containerOffset, setContainerOffset] = useState(0)
+  const [visibleCount, setVisibleCount] = useState(pageSize)
+
+  const totalItems = items.length
+  const effectiveVisibleCount = Math.min(visibleCount, totalItems)
+
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    let p: HTMLElement | null = el.parentElement
+    while (p) {
+      const s = getComputedStyle(p)
+      if (/(auto|scroll|overlay)/.test(s.overflowY)) {
+        setScrollParent(p)
+        return
+      }
+      p = p.parentElement
+    }
+    setScrollParent(document.scrollingElement as HTMLElement)
+  }, [])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !scrollParent) return
+
+    const update = (): void => {
+      const parentRect = scrollParent.getBoundingClientRect()
+      const elRect = el.getBoundingClientRect()
+      setContainerWidth(el.clientWidth)
+      setScrollTop(scrollParent.scrollTop)
+      setViewportHeight(scrollParent.clientHeight)
+      setContainerOffset(elRect.top - parentRect.top + scrollParent.scrollTop)
+    }
+
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    ro.observe(scrollParent)
+    scrollParent.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      ro.disconnect()
+      scrollParent.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [scrollParent])
+
+  const columns = Math.max(
+    1,
+    Math.floor((containerWidth + gap) / (minColumnWidth + gap))
+  )
+  const cardWidth =
+    containerWidth > 0 ? (containerWidth - gap * (columns - 1)) / columns : minColumnWidth
+
+  // Estimate: poster is 2/3 aspect ratio + ~80px body (title 2 lines + meta + padding).
+  const estimatedRowHeight = cardWidth * 1.5 + 80
+  const rowHeight = measuredRowHeight ?? estimatedRowHeight
+  const stride = rowHeight + gap
+
+  const totalRows = Math.ceil(effectiveVisibleCount / columns)
+  const totalHeight = totalRows > 0 ? totalRows * rowHeight + (totalRows - 1) * gap : 0
+
+  const relativeScrollTop = Math.max(0, scrollTop - containerOffset)
+  const firstRow = Math.max(0, Math.floor(relativeScrollTop / stride) - overscanRows)
+  const lastRow = Math.min(
+    Math.max(0, totalRows - 1),
+    Math.ceil((relativeScrollTop + viewportHeight) / stride) + overscanRows
+  )
+
+  useEffect(() => {
+    if (visibleCount >= totalItems) return
+    if (totalRows === 0) return
+    if (lastRow >= totalRows - overscanRows - 1) {
+      setVisibleCount((c) => Math.min(totalItems, c + pageSize))
+    }
+  }, [lastRow, totalRows, totalItems, visibleCount, overscanRows, pageSize])
+
+  // Clamp visibleCount down when the underlying list shrinks (e.g. filtering).
+  useEffect(() => {
+    if (visibleCount > totalItems && totalItems > 0) {
+      setVisibleCount(Math.max(pageSize, totalItems))
+    }
+  }, [totalItems, visibleCount, pageSize])
+
+  // Invalidate measured height when card width changes so it gets remeasured.
+  useEffect(() => {
+    setMeasuredRowHeight(null)
+  }, [cardWidth])
+
+  const measureRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (el && measuredRowHeight == null) {
+        const h = el.getBoundingClientRect().height
+        if (h > 0) setMeasuredRowHeight(h)
+      }
+    },
+    [measuredRowHeight]
+  )
+
+  const visible: Array<{ row: number; col: number; item: T }> = []
+  for (let r = firstRow; r <= lastRow; r++) {
+    for (let c = 0; c < columns; c++) {
+      const i = r * columns + c
+      if (i >= effectiveVisibleCount) break
+      visible.push({ row: r, col: c, item: items[i] })
+    }
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      style={{ position: 'relative', width: '100%', height: totalHeight }}
+    >
+      {visible.map(({ row, col, item }, i) => (
+        <div
+          key={getKey(item)}
+          ref={i === 0 ? measureRef : undefined}
+          style={{
+            position: 'absolute',
+            top: row * stride,
+            left: col * (cardWidth + gap),
+            width: cardWidth
+          }}
+        >
+          {renderItem(item)}
+        </div>
+      ))}
     </div>
   )
 }

@@ -113,9 +113,12 @@ export function getCachedLibrary(): AnimeEntry[] {
  * Two-phase scan:
  *   1. List the folders in every library root and emit them immediately so the
  *      grid populates right away (with cached metadata + posters where we have
- *      them).
- *   2. Then go back and fetch metadata + posters from MyAnimeList for any
- *      folder that's missing it, re-emitting each entry once it's enriched.
+ *      them). This is what the returned promise waits for.
+ *   2. Fetch metadata + posters from MyAnimeList for any folder that's missing
+ *      it, re-emitting each entry once it's enriched. This runs on its own
+ *      detached async task so the scan-done signal fires as soon as phase 1
+ *      finishes — the renderer can drop its loading state while enrichment
+ *      continues to trickle in.
  */
 export async function scanAllLibrariesStreaming(
   onItem: (entry: AnimeEntry) => void
@@ -146,24 +149,51 @@ export async function scanAllLibrariesStreaming(
     }
   }
 
-  for (const entry of needsMetadata) {
-    const metadata = await resolveMetadataForFolder(
-      entry.serverId,
-      entry.path,
-      entry.folderName
-    ).catch(() => undefined)
-    if (!metadata) continue
-    const updated = { ...entry, metadata }
-    const enriched = enrichedByRoot.get(entry.libraryRootId)
-    if (enriched) {
-      const idx = enriched.findIndex((e) => e.id === updated.id)
-      if (idx >= 0) {
-        enriched[idx] = updated
-        setCachedEntriesForRoot(entry.libraryRootId, enriched)
+  if (needsMetadata.length > 0) {
+    void enrichMetadataInBackground(needsMetadata, enrichedByRoot, onItem)
+  }
+}
+
+let activeEnrichment: Promise<void> = Promise.resolve()
+
+/**
+ * Runs metadata enrichment on its own async task so it doesn't block the
+ * caller. Multiple scans chain onto the same task to avoid overlapping Jikan
+ * requests (rate-limiter state is shared anyway).
+ */
+function enrichMetadataInBackground(
+  entries: AnimeEntry[],
+  enrichedByRoot: Map<string, AnimeEntry[]>,
+  onItem: (entry: AnimeEntry) => void
+): Promise<void> {
+  const task = activeEnrichment.then(async () => {
+    for (const entry of entries) {
+      const metadata = await resolveMetadataForFolder(
+        entry.serverId,
+        entry.path,
+        entry.folderName
+      ).catch(() => undefined)
+      if (!metadata) continue
+      const updated = { ...entry, metadata }
+      const enriched = enrichedByRoot.get(entry.libraryRootId)
+      if (enriched) {
+        const idx = enriched.findIndex((e) => e.id === updated.id)
+        if (idx >= 0) {
+          enriched[idx] = updated
+          setCachedEntriesForRoot(entry.libraryRootId, enriched)
+        }
+      }
+      try {
+        onItem(updated)
+      } catch (err) {
+        console.error('[library] enrichment emit failed', err)
       }
     }
-    onItem(updated)
-  }
+  })
+  activeEnrichment = task.catch((err) => {
+    console.error('[library] background enrichment failed', err)
+  })
+  return activeEnrichment
 }
 
 /** Hydrate a single anime entry from local cache only. Returns undefined if

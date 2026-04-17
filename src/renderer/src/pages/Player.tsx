@@ -126,6 +126,14 @@ export default function PlayerPage(): JSX.Element {
         }
       })
 
+      const syncPlayingClass = (): void => {
+        document.body.classList.toggle('video-playing', !vjsPlayer.paused())
+      }
+      vjsPlayer.on('play', syncPlayingClass)
+      vjsPlayer.on('playing', syncPlayingClass)
+      vjsPlayer.on('pause', syncPlayingClass)
+      vjsPlayer.on('ended', syncPlayingClass)
+
       playerRef.current = vjsPlayer
     }
 
@@ -145,23 +153,38 @@ export default function PlayerPage(): JSX.Element {
       if (tt) player.removeRemoteTextTrack(tt as unknown as HTMLTrackElement)
     }
 
-    probe.subtitles.forEach((sub) => {
-      player.addRemoteTextTrack(
+    if (probe.subtitles.length === 0) return
+
+    // Pick the track to show by default: the ffprobe-flagged default track,
+    // or fall back to the first one so users always see subtitles when the
+    // file has them.
+    const preferred = probe.subtitles.findIndex((s) => s.isDefault)
+    const activeIndex = preferred >= 0 ? preferred : 0
+
+    probe.subtitles.forEach((sub, i) => {
+      const trackEl = player.addRemoteTextTrack(
         {
           kind: 'subtitles',
           src: `${handle.subtitleUrl}/${sub.index}`,
           srclang: languageFromTrack(sub),
           label: subtitleLabel(sub),
-          default: sub.isDefault
+          default: i === activeIndex
         },
         false
-      )
+      ) as unknown as HTMLTrackElement
+      // `default: true` alone is unreliable once metadata has loaded; force
+      // the mode so the active track actually renders over the video.
+      const textTrack = trackEl?.track
+      if (textTrack) {
+        textTrack.mode = i === activeIndex ? 'showing' : 'disabled'
+      }
     })
   }, [handle, probe])
 
   // 4) Dispose on unmount.
   useEffect(() => {
     return () => {
+      document.body.classList.remove('video-playing')
       const p = playerRef.current
       if (p) {
         try {

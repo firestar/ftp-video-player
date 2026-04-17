@@ -26,3 +26,15 @@ mac:
   entitlementsInherit: build/entitlements.mac.plist
 dmg:
   sign: false
+  title: ${productName} ${version}
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 140
+      y: 190
+      type: file
+    - x: 400
+      y: 190
+      type: link
+      path: /Applications

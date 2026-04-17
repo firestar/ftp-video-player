@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
@@ -25,6 +25,120 @@ function createFakeTimeRanges(start: number, end: number): TimeRanges {
       return end
     }
   } as TimeRanges
+}
+
+/**
+ * Renders the active cues of any `showing` text track as an overlay over the
+ * video. Simpler than Video.js's built-in TextTrackDisplay — the overlay sits
+ * center-bottom by default, and honors WebVTT `position` / `line` / `align`
+ * when the cue carries positioning data.
+ */
+function SubtitleOverlay({ player }: { player: Player | null }): JSX.Element | null {
+  const [cues, setCues] = useState<VTTCue[]>([])
+
+  useEffect(() => {
+    if (!player) return
+    const tracks = player.textTracks() as unknown as TextTrackList
+    const attached = new Set<TextTrack>()
+
+    const refresh = (): void => {
+      const active: VTTCue[] = []
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i]
+        if (t.mode !== 'showing' || !t.activeCues) continue
+        for (let j = 0; j < t.activeCues.length; j++) {
+          active.push(t.activeCues[j] as VTTCue)
+        }
+      }
+      setCues(active)
+    }
+
+    const sync = (): void => {
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i]
+        if (attached.has(t)) continue
+        attached.add(t)
+        t.addEventListener('cuechange', refresh)
+      }
+      refresh()
+    }
+
+    tracks.addEventListener('addtrack', sync)
+    tracks.addEventListener('removetrack', refresh)
+    tracks.addEventListener('change', refresh)
+    sync()
+
+    return () => {
+      tracks.removeEventListener('addtrack', sync)
+      tracks.removeEventListener('removetrack', refresh)
+      tracks.removeEventListener('change', refresh)
+      for (const t of attached) t.removeEventListener('cuechange', refresh)
+    }
+  }, [player])
+
+  if (cues.length === 0) return null
+  const stacked: VTTCue[] = []
+  const positioned: VTTCue[] = []
+  for (const cue of cues) {
+    if (cuePosition(cue)) positioned.push(cue)
+    else stacked.push(cue)
+  }
+  return (
+    <div className="subtitle-overlay">
+      {stacked.length > 0 && (
+        <div className="subtitle-stack">
+          {stacked.map((cue, i) => (
+            <SubtitleCue key={`s-${cue.startTime}-${i}`} cue={cue} />
+          ))}
+        </div>
+      )}
+      {positioned.map((cue, i) => (
+        <SubtitleCue key={`p-${cue.startTime}-${i}`} cue={cue} />
+      ))}
+    </div>
+  )
+}
+
+function cuePosition(cue: VTTCue): { left?: number; top?: number } | null {
+  const out: { left?: number; top?: number } = {}
+  if (typeof cue.position === 'number') out.left = clamp(cue.position, 0, 100)
+  // WebVTT `line` is a line index when snapToLines is true, a percentage from
+  // the top otherwise. We honor the percentage form; line indices would need
+  // rendered-text measurement.
+  if (typeof cue.line === 'number' && !cue.snapToLines) {
+    out.top = clamp(cue.line, 0, 100)
+  }
+  return out.left === undefined && out.top === undefined ? null : out
+}
+
+function SubtitleCue({ cue }: { cue: VTTCue }): JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.textContent = ''
+    el.appendChild(cue.getCueAsHTML())
+  }, [cue])
+
+  const pos = cuePosition(cue)
+  const style: CSSProperties = {}
+  if (pos?.left !== undefined) style.left = `${pos.left}%`
+  if (pos?.top !== undefined) style.top = `${pos.top}%`
+  if (cue.align === 'start' || cue.align === 'left') style.textAlign = 'left'
+  else if (cue.align === 'end' || cue.align === 'right') style.textAlign = 'right'
+
+  return (
+    <div
+      ref={ref}
+      className={pos ? 'subtitle-cue positioned' : 'subtitle-cue'}
+      style={style}
+    />
+  )
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v))
 }
 
 function subtitleLabel(track: SubtitleTrackInfo): string {
@@ -66,6 +180,9 @@ export default function PlayerPage(): JSX.Element {
   const [mode, setMode] = useState<PlaybackMode>('direct')
   const [error, setError] = useState<string | null>(null)
   const [probing, setProbing] = useState(true)
+  // Mirrors playerRef so children (the subtitle overlay) re-render with the
+  // Video.js instance once it's created.
+  const [playerInstance, setPlayerInstance] = useState<Player | null>(null)
   // Blob URLs for prefetched WebVTT, keyed by ffprobe stream index. We fetch
   // and buffer the whole VTT before attaching the <track> so Video.js can't
   // silently drop a slow/failed HTTP track load.
@@ -273,6 +390,7 @@ export default function PlayerPage(): JSX.Element {
       })
 
       playerRef.current = vjsPlayer
+      setPlayerInstance(vjsPlayer)
     }
 
     const player = playerRef.current
@@ -494,6 +612,7 @@ export default function PlayerPage(): JSX.Element {
             playsInline
             crossOrigin="anonymous"
           />
+          <SubtitleOverlay player={playerInstance} />
         </div>
       )}
     </div>

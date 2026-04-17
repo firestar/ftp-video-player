@@ -509,6 +509,7 @@ body.video-playing .sidebar {
   width: 100%;
   background: black;
   object-fit: contain;
+  display: none;
 }
 
 .player-video-wrap {

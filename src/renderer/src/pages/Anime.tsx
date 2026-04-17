@@ -117,7 +117,7 @@ export default function Anime(): JSX.Element {
         <div>
           <div
             className="poster"
-            style={poster ? { backgroundImage: `url(${poster})` } : undefined}
+            style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
           />
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <button className="button secondary" onClick={handleSearchMetadata} disabled={searching}>
@@ -155,7 +155,7 @@ export default function Anime(): JSX.Element {
                 <div key={video.path} className="episode" onClick={() => handlePlay(video)}>
                   <div
                     className={`episode-thumb${thumb ? '' : ' placeholder'}`}
-                    style={thumb ? { backgroundImage: `url(${thumb})` } : undefined}
+                    style={thumb ? { backgroundImage: `url("${thumb}")` } : undefined}
                   >
                     {!thumb && <span>Generating…</span>}
                   </div>

@@ -147,7 +147,7 @@ function AnimeCard({ entry }: { entry: AnimeEntry }): JSX.Element {
     >
       <div
         className="card-poster"
-        style={poster ? { backgroundImage: `url(${poster})` } : undefined}
+        style={poster ? { backgroundImage: `url("${poster}")` } : undefined}
       >
         {!poster && <div className="card-poster-placeholder">🎬</div>}
       </div>

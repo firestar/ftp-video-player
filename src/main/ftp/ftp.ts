@@ -29,6 +29,11 @@ export class FtpClient implements IFtpClient {
   // to AUTH TLS on the same port (explicit FTPS) for the remainder of the
   // session, even if the user configured plain FTP.
   private secureOverride: boolean | null = null
+  // Set only as a diagnostic probe: if a TLS session keeps getting FINed we
+  // try once with cert verification relaxed to confirm it's a trust problem,
+  // then surface a precise error. We never silently proceed on an untrusted
+  // cert unless the user opted in via allowSelfSigned.
+  private trustCertOverride = false
 
   constructor(private readonly config: FtpServerConfig) {
     this.client = this.buildClient()
@@ -49,16 +54,22 @@ export class FtpClient implements IFtpClient {
     return this.config.secure ?? false
   }
 
+  private resolveRejectUnauthorized(): boolean {
+    if (this.trustCertOverride) return false
+    return !this.config.allowSelfSigned
+  }
+
   private async doConnect(): Promise<void> {
-    const { host, port, username, password, allowSelfSigned } = this.config
+    const { host, port, username, password } = this.config
     const secure = this.resolveSecure()
+    const rejectUnauthorized = this.resolveRejectUnauthorized()
     await this.client.access({
       host,
       port: port || 21,
       user: username,
       password,
       secure,
-      secureOptions: allowSelfSigned ? { rejectUnauthorized: false } : undefined
+      secureOptions: secure ? { rejectUnauthorized } : undefined
     })
     this.connected = true
   }
@@ -78,7 +89,11 @@ export class FtpClient implements IFtpClient {
     this.connected = false
   }
 
-  private async reset(opts: { skipMlsd?: boolean; upgradeTls?: boolean } = {}): Promise<void> {
+  private async reset(opts: {
+    skipMlsd?: boolean
+    upgradeTls?: boolean
+    trustCert?: boolean
+  } = {}): Promise<void> {
     try {
       this.client.close()
     } catch {
@@ -87,7 +102,11 @@ export class FtpClient implements IFtpClient {
     this.connected = false
     if (opts.skipMlsd) this.listCommandOverride = ['LIST']
     if (opts.upgradeTls) this.secureOverride = true
+    if (opts.trustCert) this.trustCertOverride = true
     this.client = this.buildClient()
+    // Give the remote a brief moment to tear down its side before we reconnect;
+    // some servers temporarily refuse new sessions right after sending FIN.
+    await new Promise((resolve) => setTimeout(resolve, 250))
   }
 
   private async withRetry<T>(op: () => Promise<T>): Promise<T> {
@@ -102,16 +121,38 @@ export class FtpClient implements IFtpClient {
         return await op()
       } catch (err2) {
         if (!isTransientFtpError(err2)) throw err2
-        // Second fallback: many modern FTP servers refuse to serve plain
-        // sessions and drop the socket. If the user configured plain FTP,
-        // transparently upgrade to AUTH TLS on the same port and retry.
         if (this.resolveSecure()) {
+          // Third fallback for TLS sessions: if the user hasn't opted into
+          // self-signed certs, probe once with cert verification relaxed. If
+          // that succeeds the drop was almost certainly a trust failure, and
+          // we surface a precise error. We do NOT proceed silently on an
+          // untrusted cert — the user must opt in via allowSelfSigned.
+          if (!this.config.allowSelfSigned && !this.trustCertOverride) {
+            await this.reset({ skipMlsd: true, trustCert: true })
+            try {
+              await op()
+              // Probe succeeded: it's a cert trust issue. Throw a specific
+              // error rather than returning the probe's result, since the
+              // user hasn't consented to trusting this cert.
+              throw new Error(
+                `The FTP server's TLS certificate is not trusted by the system. ` +
+                  `Enable "Allow self-signed certificates" in the server settings ` +
+                  `if you trust this server, or install the server's CA certificate.`
+              )
+            } catch (err3) {
+              if (!isTransientFtpError(err3)) throw err3
+              // Probe also failed transiently — fall through to generic error.
+            }
+          }
           throw new Error(
             `${(err2 as Error).message} — the FTP server dropped the connection. ` +
-              `The server may not be reachable, or its TLS certificate may be untrusted ` +
-              `(try enabling "Allow self-signed certificates"). SFTP is also worth trying.`
+              `The server may not be reachable, or it may be rejecting the session. ` +
+              `Try SFTP if available.`
           )
         }
+        // Plain FTP path: many modern servers refuse unencrypted sessions and
+        // drop the socket as soon as a data command is issued. Transparently
+        // upgrade to AUTH TLS on the same port and retry.
         await this.reset({ skipMlsd: true, upgradeTls: true })
         try {
           return await op()

@@ -656,11 +656,6 @@ body.video-playing .sidebar {
   height: 100% !important;
 }
 
-/* Video.js's built-in text track display is replaced by .subtitle-overlay. */
-.player-video-wrap .vjs-text-track-display {
-  display: none !important;
-}
-
 .player-loading {
   display: flex;
   flex-direction: column;

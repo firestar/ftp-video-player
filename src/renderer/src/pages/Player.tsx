@@ -411,6 +411,11 @@ export default function PlayerPage(): JSX.Element {
       }
       /* eslint-enable @typescript-eslint/no-explicit-any */
 
+      // Drop the built-in TextTrackDisplay so it can't render cues in parallel
+      // with <SubtitleOverlay> — CSS-hiding it proved unreliable.
+      const trackDisplay = vjsPlayer.getChild('TextTrackDisplay')
+      if (trackDisplay) vjsPlayer.removeChild(trackDisplay)
+
       vjsPlayer.on('error', () => {
         const err = vjsPlayer.error()
         // When the direct source can't be decoded by Chromium, fall back to

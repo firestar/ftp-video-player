@@ -343,7 +343,9 @@ export default function PlayerPage(): JSX.Element {
           ? 'video/x-matroska'
           : ext === 'mov'
             ? 'video/quicktime'
-            : 'video/mp4'
+            : ext === 'avi'
+              ? 'video/x-msvideo'
+              : 'video/mp4'
     return { src: handle.directUrl, type: mime }
   }, [handle, mode, path, transcodeStart, probe])
 

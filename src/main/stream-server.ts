@@ -213,6 +213,10 @@ async function handleProbe(
     '-show_streams',
     '-probesize', '10000000',
     '-analyzeduration', '10000000',
+    // Our /stream endpoint serves byte ranges, so let ffprobe seek — AVI
+    // stores its `idx1` chunk at the end of the file, and without seek it
+    // never finds the index.
+    '-seekable', '1',
     selfUrl(token)
   ]
 
@@ -336,7 +340,11 @@ async function handleTranscode(
     '-loglevel', 'warning',
     '-reconnect', '1',
     '-reconnect_streamed', '1',
-    '-reconnect_delay_max', '4'
+    '-reconnect_delay_max', '4',
+    // AVI's `idx1` chunk lives at the end of the file; ffmpeg has to seek
+    // there before it can decode. Our /stream endpoint honors byte ranges,
+    // so tell ffmpeg the input is seekable.
+    '-seekable', '1'
   ]
   if (seek > 0) {
     args.push('-ss', String(seek))

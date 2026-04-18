@@ -98,6 +98,11 @@ toggle lets the user switch manually. If direct playback errors on an
 unsupported codec mid-session, the player falls back to transcode
 automatically.
 
+Non-browser-native containers (`avi`, `mov`, `ts`, `wmv`, `flv`) always go
+through the transcode path. AVI specifically keeps its `idx1` chunk at the
+end of the file, so the stream server advertises byte-range support and
+ffmpeg is invoked with `-seekable 1` so the index can be fetched on demand.
+
 Embedded text subtitle tracks (SRT, ASS/SSA, mov_text, etc.) are converted to
 WebVTT on the fly and exposed through the Video.js captions menu. Bitmap
 formats (PGS, DVD, DVB) can't be served as WebVTT and are hidden from the

@@ -46,6 +46,7 @@ function initSchema(db: Database.Database): void {
       password TEXT NOT NULL,
       secure INTEGER,
       allow_self_signed INTEGER,
+      max_concurrent_connections INTEGER,
       position INTEGER NOT NULL DEFAULT 0
     );
 
@@ -105,6 +106,12 @@ function initSchema(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_favorite_folders_server ON favorite_folders(server_id);
   `)
+
+  // Additive migrations for columns introduced after initial schema.
+  const serverCols = db.prepare('PRAGMA table_info(servers)').all() as { name: string }[]
+  if (!serverCols.some((c) => c.name === 'max_concurrent_connections')) {
+    db.exec('ALTER TABLE servers ADD COLUMN max_concurrent_connections INTEGER')
+  }
 }
 
 function migrateFromElectronStore(db: Database.Database, jsonPath: string): void {
@@ -136,8 +143,10 @@ function migrateFromElectronStore(db: Database.Database, jsonPath: string): void
   const tx = db.transaction(() => {
     const servers = parsed.servers ?? []
     const insertServer = db.prepare(
-      `INSERT OR REPLACE INTO servers (id, name, protocol, host, port, username, password, secure, allow_self_signed, position)
-       VALUES (@id, @name, @protocol, @host, @port, @username, @password, @secure, @allow_self_signed, @position)`
+      `INSERT OR REPLACE INTO servers
+         (id, name, protocol, host, port, username, password, secure, allow_self_signed, max_concurrent_connections, position)
+       VALUES
+         (@id, @name, @protocol, @host, @port, @username, @password, @secure, @allow_self_signed, @max_concurrent_connections, @position)`
     )
     servers.forEach((s, i) => insertServer.run(serverToRow(s, i)))
 
@@ -221,6 +230,10 @@ function serverToRow(s: FtpServerConfig, position: number): Record<string, unkno
     password: s.password,
     secure: s.secure ? 1 : 0,
     allow_self_signed: s.allowSelfSigned ? 1 : 0,
+    max_concurrent_connections:
+      typeof s.maxConcurrentConnections === 'number' && s.maxConcurrentConnections > 0
+        ? s.maxConcurrentConnections
+        : null,
     position
   }
 }
@@ -235,7 +248,11 @@ function rowToServer(row: ServerRow): FtpServerConfig {
     username: row.username,
     password: row.password,
     secure: !!row.secure,
-    allowSelfSigned: !!row.allow_self_signed
+    allowSelfSigned: !!row.allow_self_signed,
+    maxConcurrentConnections:
+      typeof row.max_concurrent_connections === 'number' && row.max_concurrent_connections > 0
+        ? row.max_concurrent_connections
+        : undefined
   }
 }
 
@@ -291,6 +308,7 @@ interface ServerRow {
   password: string
   secure: number | null
   allow_self_signed: number | null
+  max_concurrent_connections: number | null
 }
 
 interface LibraryRootRow {
@@ -349,7 +367,9 @@ export function upsertServer(input: Omit<FtpServerConfig, 'id'> & { id?: string 
       db.prepare(
         `UPDATE servers SET name = @name, protocol = @protocol, host = @host, port = @port,
          username = @username, password = @password, secure = @secure,
-         allow_self_signed = @allow_self_signed WHERE id = @id`
+         allow_self_signed = @allow_self_signed,
+         max_concurrent_connections = @max_concurrent_connections
+         WHERE id = @id`
       ).run({
         id: merged.id,
         name: merged.name,
@@ -359,7 +379,11 @@ export function upsertServer(input: Omit<FtpServerConfig, 'id'> & { id?: string 
         username: merged.username,
         password: merged.password,
         secure: merged.secure ? 1 : 0,
-        allow_self_signed: merged.allowSelfSigned ? 1 : 0
+        allow_self_signed: merged.allowSelfSigned ? 1 : 0,
+        max_concurrent_connections:
+          typeof merged.maxConcurrentConnections === 'number' && merged.maxConcurrentConnections > 0
+            ? merged.maxConcurrentConnections
+            : null
       })
       return merged
     }
@@ -367,8 +391,10 @@ export function upsertServer(input: Omit<FtpServerConfig, 'id'> & { id?: string 
   const created: FtpServerConfig = { ...input, id: existingId ?? randomUUID() } as FtpServerConfig
   const { count } = db.prepare('SELECT COUNT(*) AS count FROM servers').get() as { count: number }
   db.prepare(
-    `INSERT INTO servers (id, name, protocol, host, port, username, password, secure, allow_self_signed, position)
-     VALUES (@id, @name, @protocol, @host, @port, @username, @password, @secure, @allow_self_signed, @position)`
+    `INSERT INTO servers
+       (id, name, protocol, host, port, username, password, secure, allow_self_signed, max_concurrent_connections, position)
+     VALUES
+       (@id, @name, @protocol, @host, @port, @username, @password, @secure, @allow_self_signed, @max_concurrent_connections, @position)`
   ).run(serverToRow(created, count))
   return created
 }

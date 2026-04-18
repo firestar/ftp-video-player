@@ -19,11 +19,17 @@ export default function ServerForm({ initial, onClose, onSave }: Props): JSX.Ele
   const [password, setPassword] = useState(initial?.password ?? '')
   const [secure, setSecure] = useState<boolean>(initial?.secure ?? false)
   const [allowSelfSigned, setAllowSelfSigned] = useState<boolean>(initial?.allowSelfSigned ?? false)
+  const [maxConcurrentConnections, setMaxConcurrentConnections] = useState<number>(
+    initial?.maxConcurrentConnections ?? 0
+  )
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
   function buildConfig(): Omit<FtpServerConfig, 'id'> & { id?: string } {
+    const normalizedMax = Number.isFinite(maxConcurrentConnections)
+      ? Math.max(0, Math.floor(maxConcurrentConnections))
+      : 0
     return {
       id: initial?.id,
       name: name.trim() || `${username}@${host}`,
@@ -33,7 +39,8 @@ export default function ServerForm({ initial, onClose, onSave }: Props): JSX.Ele
       username: username.trim(),
       password,
       secure,
-      allowSelfSigned
+      allowSelfSigned,
+      maxConcurrentConnections: normalizedMax > 0 ? normalizedMax : undefined
     }
   }
 
@@ -115,6 +122,22 @@ export default function ServerForm({ initial, onClose, onSave }: Props): JSX.Ele
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
             </label>
           </div>
+
+          <label>
+            Max concurrent connections
+            <input
+              type="number"
+              value={maxConcurrentConnections}
+              onChange={(e) => setMaxConcurrentConnections(Number(e.target.value))}
+              min={0}
+              max={32}
+              placeholder="0 = unlimited"
+            />
+            <span style={{ fontSize: 11, color: '#8b949e', marginTop: 4 }}>
+              Cap the number of simultaneous FTP sessions against this server. Many seedbox / anime
+              FTP servers allow only 1–2 at a time. Leave at 0 for unlimited.
+            </span>
+          </label>
 
           {protocol === 'ftp' && (
             <label style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

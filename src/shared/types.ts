@@ -12,6 +12,12 @@ export interface FtpServerConfig {
   secure?: boolean
   /** Allow self-signed certificates for FTPS/SFTP. */
   allowSelfSigned?: boolean
+  /**
+   * Maximum number of simultaneously open FTP sessions against this server.
+   * Additional connection attempts wait until an existing session is closed.
+   * `0` or unset means unlimited.
+   */
+  maxConcurrentConnections?: number
 }
 
 export interface LibraryRoot {

@@ -66,6 +66,9 @@ export default function Servers(): JSX.Element {
                   <div style={{ fontWeight: 600 }}>{server.name}</div>
                   <div className="meta">
                     {server.protocol.toUpperCase()} · {server.username}@{server.host}:{server.port}
+                    {server.maxConcurrentConnections && server.maxConcurrentConnections > 0
+                      ? ` · max ${server.maxConcurrentConnections} conn`
+                      : ''}
                   </div>
                 </div>
                 <div className="actions">

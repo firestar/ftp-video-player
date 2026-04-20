@@ -388,11 +388,14 @@ async function handleTranscode(
 
   args.push(
     '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '22',
+    // `medium` + CRF 18 is the widely accepted "visually lossless" recipe
+    // for x264; the output is indistinguishable from the source for the vast
+    // majority of content while still fitting in a streamable bitrate.
+    '-preset', 'medium',
+    '-crf', '18',
     '-pix_fmt', 'yuv420p',
     '-c:a', 'aac',
-    '-b:a', '192k',
+    '-b:a', '256k',
     '-ac', '2',
     '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
     '-f', 'mp4',

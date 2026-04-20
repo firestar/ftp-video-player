@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AnimeEntry, Api, VideoProgress } from '@shared/types'
+import type { AnimeEntry, Api, SyncConfig, VideoProgress } from '@shared/types'
 
 const api: Api = {
   listServers: () => ipcRenderer.invoke('servers:list'),
@@ -51,7 +51,14 @@ const api: Api = {
   listFavoriteFolders: () => ipcRenderer.invoke('favorites:list'),
   addFavoriteFolder: (input) => ipcRenderer.invoke('favorites:add', input),
   removeFavoriteFolder: (serverId, path) =>
-    ipcRenderer.invoke('favorites:remove', serverId, path)
+    ipcRenderer.invoke('favorites:remove', serverId, path),
+
+  getSyncConfig: () => ipcRenderer.invoke('sync:get'),
+  setSyncConfig: (config: SyncConfig) => ipcRenderer.invoke('sync:set', config),
+  clearSyncConfig: () => ipcRenderer.invoke('sync:clear'),
+  testSync: (config: SyncConfig) => ipcRenderer.invoke('sync:test', config),
+  pushSync: () => ipcRenderer.invoke('sync:push'),
+  pullSync: () => ipcRenderer.invoke('sync:pull')
 }
 
 contextBridge.exposeInMainWorld('api', api)

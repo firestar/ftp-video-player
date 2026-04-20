@@ -1,0 +1,36 @@
+server:
+  port: ${SYNC_SERVER_PORT:8080}
+  # Large video thumbnails and posters can push past the Spring default. The
+  # SQLite DB, posters, and thumbnails are uploaded/downloaded as octet-streams,
+  # so we bump the request limits well clear of any realistic library size.
+  tomcat:
+    max-swallow-size: -1
+    max-http-form-post-size: -1
+
+spring:
+  application:
+    name: ftp-anime-player-sync
+  servlet:
+    multipart:
+      max-file-size: 2GB
+      max-request-size: 2GB
+  main:
+    banner-mode: off
+
+sync:
+  # Root on-disk directory used for per-user data. Each configured user gets
+  # their own sub-tree: <data-dir>/<username>/db/ftp-anime-player.db and
+  # <data-dir>/<username>/cache/{posters,thumbnails}/*.
+  data-dir: ${SYNC_DATA_DIR:./data}
+  # Users whose credentials the client can authenticate with via HTTP Basic.
+  # Passwords can be either plain text (auto-encoded on first load) or bcrypt
+  # hashes prefixed with `{bcrypt}`. Override via SYNC_USERS env var using the
+  # format `user1:pass1,user2:pass2` or by pointing at an alternate config.
+  users:
+    - username: admin
+      password: changeme
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: INFO

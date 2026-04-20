@@ -6,6 +6,7 @@ import type {
   FtpServerConfig,
   LibraryRoot,
   RemoteEntry,
+  SyncConfig,
   VideoProgress
 } from '@shared/types'
 import {
@@ -33,6 +34,14 @@ import {
 import { overrideMetadataForFolder, resolveMetadataForFolder, searchAnime } from './anime.js'
 import { generateThumbnail } from './thumbnail.js'
 import { registerStream, unregisterStream } from './stream-server.js'
+import {
+  clearSyncConfig,
+  getSyncConfig,
+  pullSync,
+  pushSync,
+  setSyncConfig,
+  testSync
+} from './sync.js'
 
 export function registerIpcHandlers(): void {
   ipcMain.handle('servers:list', () => listServers())
@@ -156,6 +165,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('favorites:remove', (_e, serverId: string, path: string) =>
     removeFavoriteFolder(serverId, path)
   )
+
+  ipcMain.handle('sync:get', () => getSyncConfig())
+  ipcMain.handle('sync:set', (_e, config: SyncConfig) => setSyncConfig(config))
+  ipcMain.handle('sync:clear', () => clearSyncConfig())
+  ipcMain.handle('sync:test', (_e, config: SyncConfig) => testSync(config))
+  ipcMain.handle('sync:push', () => pushSync())
+  ipcMain.handle('sync:pull', () => pullSync())
 
   ipcMain.handle('progress:listUnfinished', () => {
     return listVideoProgress()

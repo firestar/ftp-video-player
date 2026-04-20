@@ -9,6 +9,7 @@ import type {
   FavoriteFolder,
   FtpServerConfig,
   LibraryRoot,
+  SyncConfig,
   VideoFile,
   VideoProgress
 } from '@shared/types'
@@ -95,6 +96,15 @@ function initSchema(db: Database.Database): void {
       poster_path TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_video_progress_updated ON video_progress(updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS sync_config (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      base_url TEXT NOT NULL,
+      username TEXT NOT NULL,
+      password TEXT NOT NULL,
+      last_pushed_at INTEGER,
+      last_pulled_at INTEGER
+    );
 
     CREATE TABLE IF NOT EXISTS favorite_folders (
       server_id TEXT NOT NULL,
@@ -604,4 +614,57 @@ export function removeFavoriteFolder(serverId: string, pathValue: string): Favor
     .prepare('DELETE FROM favorite_folders WHERE server_id = ? AND path = ?')
     .run(serverId, pathValue)
   return listFavoriteFolders()
+}
+
+interface SyncConfigRow {
+  base_url: string
+  username: string
+  password: string
+  last_pushed_at: number | null
+  last_pulled_at: number | null
+}
+
+export function getSyncConfig(): SyncConfig | undefined {
+  const row = getDb().prepare('SELECT * FROM sync_config WHERE id = 1').get() as
+    | SyncConfigRow
+    | undefined
+  if (!row) return undefined
+  return {
+    baseUrl: row.base_url,
+    username: row.username,
+    password: row.password,
+    lastPushedAt: row.last_pushed_at ?? undefined,
+    lastPulledAt: row.last_pulled_at ?? undefined
+  }
+}
+
+export function setSyncConfig(config: SyncConfig): SyncConfig {
+  getDb()
+    .prepare(
+      `INSERT INTO sync_config (id, base_url, username, password, last_pushed_at, last_pulled_at)
+       VALUES (1, @base_url, @username, @password, @last_pushed_at, @last_pulled_at)
+       ON CONFLICT(id) DO UPDATE SET
+         base_url = excluded.base_url,
+         username = excluded.username,
+         password = excluded.password,
+         last_pushed_at = COALESCE(excluded.last_pushed_at, sync_config.last_pushed_at),
+         last_pulled_at = COALESCE(excluded.last_pulled_at, sync_config.last_pulled_at)`
+    )
+    .run({
+      base_url: config.baseUrl,
+      username: config.username,
+      password: config.password,
+      last_pushed_at: config.lastPushedAt ?? null,
+      last_pulled_at: config.lastPulledAt ?? null
+    })
+  return getSyncConfig() as SyncConfig
+}
+
+export function clearSyncConfig(): void {
+  getDb().prepare('DELETE FROM sync_config WHERE id = 1').run()
+}
+
+export function getDbFilePath(): string {
+  getDb()
+  return path.join(app.getPath('userData'), DB_FILE_NAME)
 }

@@ -109,6 +109,14 @@ formats (PGS, DVD, DVB) can't be served as WebVTT and are hidden from the
 menu; they require burn-in via the transcode endpoint (`?sub=<streamIndex>`)
 to be visible.
 
+## Sync server
+
+An optional Spring Boot backend in [`server/`](./server) can host the SQLite
+database plus the poster/thumbnail caches so they roam between machines. Start
+it with `mvn spring-boot:run`, set credentials in `application.yml`, then open
+the **Sync** tab in the desktop app to save the URL + user/password and
+push/pull on demand. See [`server/README.md`](./server/README.md) for details.
+
 ## Caches
 
 - `app.getPath('userData')/posters/` — poster images from MyAnimeList

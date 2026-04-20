@@ -95,6 +95,12 @@ export interface StreamHandle {
   probeUrl: string
   /** Subtitle extractor base — append `/<streamIndex>` for a WebVTT track. */
   subtitleUrl: string
+  /**
+   * Batch subtitle extractor: returns a JSON `{ [streamIndex]: webVttText }`
+   * map covering every text-based track in one ffmpeg pass over a single
+   * FTP read. Much faster than calling `subtitleUrl` once per track.
+   */
+  subtitlesUrl: string
   /** @deprecated Alias of directUrl kept for older renderer code. */
   url: string
 }

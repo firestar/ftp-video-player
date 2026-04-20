@@ -1,4 +1,7 @@
 import http from 'node:http'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
@@ -17,6 +20,10 @@ interface Registration {
   size: number
   /** Populated by /probe; maps stream index → ffprobe codec_name. */
   subtitleCodecs?: Map<number, string>
+  /** Cached WebVTT output from the batch extractor, keyed by stream index. */
+  subtitlesCache?: Record<number, string>
+  /** In-flight batch extraction; dedupes concurrent requests. */
+  subtitlesInflight?: Promise<Record<number, string>>
 }
 
 const TEXT_SUBTITLE_CODECS = new Set([
@@ -87,6 +94,7 @@ export function registerStream(input: { serverId: string; path: string; size: nu
   transcodeUrl: string
   probeUrl: string
   subtitleUrl: string
+  subtitlesUrl: string
   /** @deprecated kept for backward compatibility with older renderer code */
   url: string
 } {
@@ -99,6 +107,7 @@ export function registerStream(input: { serverId: string; path: string; size: nu
     transcodeUrl: `${base}/transcode/${token}`,
     probeUrl: `${base}/probe/${token}`,
     subtitleUrl: `${base}/subtitle/${token}`,
+    subtitlesUrl: `${base}/subtitles/${token}`,
     url: `${base}/stream/${token}`
   }
 }
@@ -647,6 +656,182 @@ async function handleSubtitle(
   }
 }
 
+/**
+ * Extract every text-based embedded subtitle track in a single ffmpeg pass and
+ * return them as a JSON map keyed by stream index.
+ *
+ * The older /subtitle/{token}/{index} endpoint spawns one ffmpeg + one FTP
+ * connection per track, each of which has to stream the entire video file
+ * just to pull out a single subtitle stream. For a 12 GB MKV with three
+ * subtitle tracks that's ~36 GB of data transfer and three processes fighting
+ * over the server's concurrent-session cap.
+ *
+ * Here we open ONE FTP read, pipe it into ONE ffmpeg process with multiple
+ * `-map … -c:s webvtt output.vtt` targets, and read all outputs at once.
+ * Results are cached on the Registration so repeated fetches (e.g. retries
+ * or mode switches) don't re-extract.
+ */
+async function handleSubtitlesBatch(
+  _req: http.IncomingMessage,
+  res: http.ServerResponse,
+  token: string
+): Promise<void> {
+  const reg = registrations.get(token)
+  if (!reg) {
+    res.statusCode = 404
+    res.end('not found')
+    return
+  }
+  if (!ffmpegPath) {
+    res.statusCode = 500
+    res.end('ffmpeg missing')
+    return
+  }
+
+  try {
+    const result = await extractAllSubtitles(reg)
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-store')
+    res.statusCode = 200
+    res.end(JSON.stringify(result))
+  } catch (err) {
+    console.error('[subtitles-batch] failed', err)
+    if (!res.headersSent) {
+      res.statusCode = 500
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8')
+      res.end(`subtitles batch failed: ${(err as Error).message}`)
+    } else {
+      res.destroy()
+    }
+  }
+}
+
+async function extractAllSubtitles(
+  reg: Registration
+): Promise<Record<number, string>> {
+  if (reg.subtitlesCache) return reg.subtitlesCache
+  if (reg.subtitlesInflight) return reg.subtitlesInflight
+
+  const run = (async (): Promise<Record<number, string>> => {
+    // Make sure we know the codec of every subtitle stream. /probe normally
+    // populates this; if it hasn't run yet we fall back to a minimal ffprobe.
+    if (!reg.subtitleCodecs) {
+      // getSubtitleCodec populates reg.subtitleCodecs as a side-effect.
+      await getSubtitleCodec(reg, -1)
+    }
+    const codecs = reg.subtitleCodecs ?? new Map<number, string>()
+    const textIndices: number[] = []
+    for (const [idx, codec] of codecs) {
+      if (isTextSubtitle(codec)) textIndices.push(idx)
+    }
+    textIndices.sort((a, b) => a - b)
+    if (textIndices.length === 0) return {}
+
+    const ftpServer = getServer(reg.serverId)
+    if (!ftpServer) throw new Error('server missing')
+    if (!ffmpegPath) throw new Error('ffmpeg missing')
+
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'ftpvp-subs-'))
+    const outputs = textIndices.map((idx) => ({
+      idx,
+      file: path.join(tmpDir, `${idx}.vtt`)
+    }))
+
+    const args = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-probesize', '10M',
+      '-analyzeduration', '10M',
+      '-i', 'pipe:0',
+      '-y'
+    ]
+    for (const { idx, file } of outputs) {
+      args.push('-map', `0:${idx}`, '-c:s', 'webvtt', '-f', 'webvtt', file)
+    }
+
+    const proc = spawn(ffmpegPath, args)
+    let ftpClient: IFtpClient | undefined
+    let ftpStream: Readable | undefined
+    let stderrTail = ''
+    let torn = false
+
+    const teardown = (): void => {
+      if (torn) return
+      torn = true
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        // ignore
+      }
+      try {
+        ftpStream?.destroy()
+      } catch {
+        // ignore
+      }
+      ftpClient?.disconnect().catch(() => undefined)
+    }
+
+    proc.stderr.on('data', (chunk: Buffer) => {
+      const msg = chunk.toString('utf8')
+      stderrTail = (stderrTail + msg).slice(-2000)
+      const trimmed = msg.trim()
+      if (trimmed) console.error('[subtitles-batch]', trimmed)
+    })
+
+    try {
+      ftpClient = await createFtpClient(ftpServer)
+      await ftpClient.connect()
+      ftpStream = await ftpClient.createReadStream(reg.path)
+      ftpStream.on('error', (err) => {
+        try {
+          proc.stdin.destroy(err)
+        } catch {
+          // ignore
+        }
+      })
+      proc.stdin.on('error', () => {
+        ftpStream?.destroy()
+      })
+      ftpStream.pipe(proc.stdin)
+
+      const exitCode = await new Promise<number>((resolve, reject) => {
+        proc.once('error', reject)
+        proc.once('close', (code) => resolve(code ?? 1))
+      })
+
+      if (exitCode !== 0) {
+        throw new Error(
+          `ffmpeg exited ${exitCode}${stderrTail.trim() ? `: ${stderrTail.trim()}` : ''}`
+        )
+      }
+
+      const result: Record<number, string> = {}
+      await Promise.all(
+        outputs.map(async ({ idx, file }) => {
+          try {
+            result[idx] = await fs.promises.readFile(file, 'utf8')
+          } catch (err) {
+            console.error(`[subtitles-batch] read ${idx} failed`, err)
+          }
+        })
+      )
+
+      reg.subtitlesCache = result
+      return result
+    } finally {
+      teardown()
+      fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined)
+    }
+  })()
+
+  reg.subtitlesInflight = run
+  try {
+    return await run
+  } finally {
+    reg.subtitlesInflight = undefined
+  }
+}
+
 function setCors(res: http.ServerResponse): void {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Headers', 'Range')
@@ -673,6 +858,16 @@ export function startStreamServer(): Promise<number> {
       const rest = url.replace('/transcode/', '')
       const token = rest.split('?')[0]
       void handleTranscode(req, res, token)
+      return
+    }
+    if (url.startsWith('/subtitles/')) {
+      const token = url.replace('/subtitles/', '').split('?')[0].split('/')[0]
+      if (!token) {
+        res.statusCode = 400
+        res.end('bad url')
+        return
+      }
+      void handleSubtitlesBatch(req, res, token)
       return
     }
     if (url.startsWith('/subtitle/')) {

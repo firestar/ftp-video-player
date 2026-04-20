@@ -509,12 +509,13 @@ export default function PlayerPage(): JSX.Element {
     }
   }, [currentSrc, mode, serverId, path, size, title, animeTitle, poster])
 
-  // 3a) Prefetch each text subtitle as raw WebVTT text.
-  // Doing the fetch ourselves (instead of letting Video.js's internal text
-  // track loader pull the HTTP URL) is the difference between captions
-  // rendering and silent failure: Video.js swallows XHR errors, and the
-  // /subtitle endpoint can take a while because ffmpeg has to stream the
-  // whole MKV over FTP before it emits any cues.
+  // 3a) Prefetch every text subtitle in ONE request.
+  // The backend /subtitles endpoint runs a single ffmpeg pass over a single
+  // FTP read and returns a `{ [streamIndex]: webVttText }` map. Doing this
+  // one-shot (instead of N parallel /subtitle/{idx} fetches) avoids opening
+  // N concurrent FTP sessions — which usually exceeds the server's session
+  // cap and serializes anyway — and avoids streaming the whole video file N
+  // times just to pull out N small subtitle tracks.
   useEffect(() => {
     if (!handle || !probe) return
     setSubtitlesLoaded(false)
@@ -528,31 +529,35 @@ export default function PlayerPage(): JSX.Element {
     let cancelled = false
 
     ;(async () => {
-      const entries = await Promise.all(
-        textTracks.map(async (sub) => {
-          const url = `${handle.subtitleUrl}/${sub.index}`
-          try {
-            const res = await fetch(url)
-            if (!res.ok) {
-              const tail = (await res.text()).slice(0, 500)
-              console.error(`[subs] fetch ${sub.index} failed ${res.status}: ${tail}`)
-              return null
-            }
-            const text = await res.text()
-            return [sub.index, text] as const
-          } catch (err) {
-            console.error(`[subs] fetch ${sub.index} error`, err)
-            return null
+      try {
+        const res = await fetch(handle.subtitlesUrl)
+        if (!res.ok) {
+          const tail = (await res.text()).slice(0, 500)
+          console.error(`[subs] batch fetch failed ${res.status}: ${tail}`)
+          if (!cancelled) {
+            setSubtitleTexts(new Map())
+            setSubtitlesLoaded(true)
           }
-        })
-      )
-      if (cancelled) return
-      const next = new Map<number, string>()
-      for (const entry of entries) {
-        if (entry) next.set(entry[0], entry[1])
+          return
+        }
+        const data = (await res.json()) as Record<string, string>
+        if (cancelled) return
+        const next = new Map<number, string>()
+        for (const sub of textTracks) {
+          const text = data[String(sub.index)]
+          if (typeof text === 'string' && text.length > 0) {
+            next.set(sub.index, text)
+          }
+        }
+        setSubtitleTexts(next)
+        setSubtitlesLoaded(true)
+      } catch (err) {
+        console.error('[subs] batch fetch error', err)
+        if (!cancelled) {
+          setSubtitleTexts(new Map())
+          setSubtitlesLoaded(true)
+        }
       }
-      setSubtitleTexts(next)
-      setSubtitlesLoaded(true)
     })()
 
     return () => {

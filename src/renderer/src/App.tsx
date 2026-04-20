@@ -5,6 +5,7 @@ import Anime from './pages/Anime'
 import Player from './pages/Player'
 import Favorites from './pages/Favorites'
 import ContinueWatching from './pages/ContinueWatching'
+import Sync from './pages/Sync'
 
 export default function App(): JSX.Element {
   return (
@@ -19,6 +20,7 @@ export default function App(): JSX.Element {
           <NavLink to="/favorites">Favorites</NavLink>
           <NavLink to="/continue-watching">Continue Watching</NavLink>
           <NavLink to="/servers">Servers</NavLink>
+          <NavLink to="/sync">Sync</NavLink>
         </nav>
         <div className="sidebar-footer">Streaming from FTP / SFTP</div>
       </aside>
@@ -29,6 +31,7 @@ export default function App(): JSX.Element {
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/continue-watching" element={<ContinueWatching />} />
           <Route path="/servers" element={<Servers />} />
+          <Route path="/sync" element={<Sync />} />
           <Route path="/anime/:serverId/:libraryRootId" element={<Anime />} />
           <Route path="/player/:serverId" element={<Player />} />
         </Routes>

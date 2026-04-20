@@ -129,6 +129,35 @@ export interface ConnectionTestResult {
   error?: string
 }
 
+export interface SyncConfig {
+  baseUrl: string
+  username: string
+  password: string
+  lastPushedAt?: number
+  lastPulledAt?: number
+}
+
+export interface SyncStatus {
+  ok: boolean
+  message: string
+  remoteDbExists?: boolean
+  remoteDbSize?: number
+  remoteDbLastModifiedMs?: number
+  remotePosterCount?: number
+  remoteThumbnailCount?: number
+}
+
+export interface SyncResult {
+  ok: boolean
+  message: string
+  dbBytes?: number
+  postersUploaded?: number
+  postersDownloaded?: number
+  thumbnailsUploaded?: number
+  thumbnailsDownloaded?: number
+  errors?: string[]
+}
+
 export interface VideoProgress {
   serverId: string
   path: string
@@ -211,4 +240,11 @@ export interface Api {
   listFavoriteFolders(): Promise<FavoriteFolder[]>
   addFavoriteFolder(input: FavoriteFolder): Promise<FavoriteFolder[]>
   removeFavoriteFolder(serverId: string, path: string): Promise<FavoriteFolder[]>
+
+  getSyncConfig(): Promise<SyncConfig | undefined>
+  setSyncConfig(config: SyncConfig): Promise<SyncConfig>
+  clearSyncConfig(): Promise<void>
+  testSync(config: SyncConfig): Promise<SyncStatus>
+  pushSync(): Promise<SyncResult>
+  pullSync(): Promise<SyncResult>
 }

@@ -766,6 +766,36 @@ body.video-playing .sidebar {
   font-size: 12px;
 }
 
+/* Floats above the video.js controls in the bottom-right corner. */
+.next-episode-button {
+  position: absolute;
+  right: 24px;
+  bottom: 70px;
+  z-index: 4;
+  padding: 10px 18px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.next-episode-button:hover {
+  background: var(--accent, #3ea6ff);
+  border-color: transparent;
+  transform: translateY(-1px);
+}
+
+.next-episode-button:focus-visible {
+  outline: 2px solid var(--accent, #3ea6ff);
+  outline-offset: 2px;
+}
+
 .tabs {
   display: flex;
   gap: 4px;

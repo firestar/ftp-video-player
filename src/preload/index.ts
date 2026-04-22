@@ -35,6 +35,8 @@ const api: Api = {
   refreshMetadata: (serverId, path, folderName) =>
     ipcRenderer.invoke('anime:refreshMetadata', serverId, path, folderName),
 
+  scanMetadataMismatches: () => ipcRenderer.invoke('library:scanMetadataMismatches'),
+
   generateThumbnail: (serverId, remotePath, timestampSeconds) =>
     ipcRenderer.invoke('thumbnail:generate', serverId, remotePath, timestampSeconds),
 

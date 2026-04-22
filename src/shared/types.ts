@@ -79,6 +79,31 @@ export interface FavoriteFolder {
   addedAt: number
 }
 
+export type MetadataMismatchReason = 'missing' | 'no-overlap' | 'low-overlap'
+
+export interface MetadataMatch {
+  ok: boolean
+  /** 0..1 similarity between folder name and the best candidate title. */
+  score: number
+  /** Whichever title variant (title/english/japanese) scored highest. */
+  bestTitle?: string
+  reason?: MetadataMismatchReason
+}
+
+export interface MetadataMismatch {
+  entryId: string
+  serverId: string
+  libraryRootId: string
+  folderName: string
+  path: string
+  metadataTitle: string
+  metadataEnglishTitle?: string
+  metadataJapaneseTitle?: string
+  posterPath?: string
+  score: number
+  reason: MetadataMismatchReason
+}
+
 export interface StreamRequest {
   serverId: string
   path: string
@@ -222,6 +247,8 @@ export interface Api {
     path: string,
     folderName: string
   ): Promise<AnimeMetadata | undefined>
+
+  scanMetadataMismatches(): Promise<MetadataMismatch[]>
 
   generateThumbnail(
     serverId: string,

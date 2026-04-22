@@ -5,6 +5,7 @@ import Anime from './pages/Anime'
 import Player from './pages/Player'
 import Favorites from './pages/Favorites'
 import ContinueWatching from './pages/ContinueWatching'
+import MetadataCheck from './pages/MetadataCheck'
 import Sync from './pages/Sync'
 
 export default function App(): JSX.Element {
@@ -19,6 +20,7 @@ export default function App(): JSX.Element {
           <NavLink to="/library">Library</NavLink>
           <NavLink to="/favorites">Favorites</NavLink>
           <NavLink to="/continue-watching">Continue Watching</NavLink>
+          <NavLink to="/metadata-check">Metadata Check</NavLink>
           <NavLink to="/servers">Servers</NavLink>
           <NavLink to="/sync">Sync</NavLink>
         </nav>
@@ -30,6 +32,7 @@ export default function App(): JSX.Element {
           <Route path="/library" element={<Library />} />
           <Route path="/favorites" element={<Favorites />} />
           <Route path="/continue-watching" element={<ContinueWatching />} />
+          <Route path="/metadata-check" element={<MetadataCheck />} />
           <Route path="/servers" element={<Servers />} />
           <Route path="/sync" element={<Sync />} />
           <Route path="/anime/:serverId/:libraryRootId" element={<Anime />} />

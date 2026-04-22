@@ -941,6 +941,78 @@ body.video-playing .sidebar {
   border-color: var(--text-dim);
 }
 
+.mismatch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mismatch-row {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.mismatch-row:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.mismatch-poster {
+  width: 72px;
+  height: 108px;
+  border-radius: 6px;
+  background: #0a0a0d;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 22px;
+}
+
+.mismatch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.mismatch-folder {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mismatch-title {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.mismatch-title span {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mismatch-alt {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mismatch-meta {
+  margin-top: 4px;
+}
+
 .toast {
   position: fixed;
   bottom: 20px;

@@ -32,6 +32,7 @@ import {
   scanAllLibrariesStreaming
 } from './library.js'
 import { overrideMetadataForFolder, resolveMetadataForFolder, searchAnime } from './anime.js'
+import { scanMetadataMismatches } from './metadataMatch.js'
 import { generateThumbnail } from './thumbnail.js'
 import { registerStream, unregisterStream } from './stream-server.js'
 import {
@@ -127,6 +128,8 @@ export function registerIpcHandlers(): void {
     async (_e, serverId: string, folderPath: string, folderName: string) =>
       resolveMetadataForFolder(serverId, folderPath, folderName, { force: true })
   )
+
+  ipcMain.handle('library:scanMetadataMismatches', () => scanMetadataMismatches())
 
   ipcMain.handle(
     'thumbnail:generate',

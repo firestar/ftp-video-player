@@ -3,8 +3,10 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import videojs from 'video.js'
 import type Player from 'video.js/dist/types/player'
 import 'video.js/dist/video-js.css'
-import type { ProbeResult, StreamHandle, SubtitleTrackInfo } from '@shared/types'
+import type { ProbeResult, StreamHandle, SubtitleTrackInfo, VideoFile } from '@shared/types'
 import { api } from '../api'
+
+const NEXT_EPISODE_THRESHOLD = 0.9
 
 type PlaybackMode = 'direct' | 'transcode'
 
@@ -270,6 +272,11 @@ export default function PlayerPage(): JSX.Element {
   // Seconds of the source file the current transcode stream started at. When
   // the user seeks we bump this, which rebuilds the src with a new `?seek=`.
   const [transcodeStart, setTranscodeStart] = useState(0)
+  // Other videos in the same folder, used to compute the next episode.
+  const [folderVideos, setFolderVideos] = useState<VideoFile[]>([])
+  // Flips on once playback crosses the next-episode threshold, so the button
+  // appears in the bottom-right of the player. Reset on every new file.
+  const [nearEnd, setNearEnd] = useState(false)
 
   // Refs mirror the reactive values above so the monkey-patched player
   // methods (installed once) always read the latest values.
@@ -686,6 +693,87 @@ export default function PlayerPage(): JSX.Element {
     }
   }, [])
 
+  // 5) Look up the sibling videos in the same folder so we can offer a "Next
+  // episode" jump. The cached lookup answers instantly when arriving from the
+  // Anime page; the live load covers cold-cache entries (e.g. when navigating
+  // here directly from Continue Watching).
+  const folderPath = useMemo(() => {
+    const idx = path.lastIndexOf('/')
+    if (idx <= 0) return '/'
+    return path.slice(0, idx)
+  }, [path])
+
+  useEffect(() => {
+    let cancelled = false
+    setFolderVideos([])
+    void (async () => {
+      try {
+        const cached = await api.cachedAnime(serverId, folderPath, '')
+        if (!cancelled && cached && cached.videos.length > 0) {
+          setFolderVideos(cached.videos)
+          return
+        }
+      } catch {
+        // ignore — fall through to live load
+      }
+      try {
+        const loaded = await api.loadAnime(serverId, folderPath, '')
+        if (!cancelled && loaded) setFolderVideos(loaded.videos)
+      } catch {
+        // ignore — leave the next-episode button hidden
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [serverId, folderPath])
+
+  const nextEpisode = useMemo(() => {
+    if (folderVideos.length === 0) return null
+    const idx = folderVideos.findIndex((v) => v.path === path)
+    if (idx < 0 || idx >= folderVideos.length - 1) return null
+    return folderVideos[idx + 1]
+  }, [folderVideos, path])
+
+  // Reset the near-end flag and the resume guard whenever the active file
+  // changes — both must come from a fresh state for the next episode so the
+  // button hides until the new file approaches its end and the resume logic
+  // re-runs against the new file's saved progress.
+  useEffect(() => {
+    setNearEnd(false)
+    hasResumedRef.current = false
+    autoplayedSrcRef.current = null
+  }, [path])
+
+  useEffect(() => {
+    const p = playerInstance
+    if (!p) return
+    const check = (): void => {
+      const cur = p.currentTime() ?? 0
+      const dur = p.duration() ?? 0
+      if (!Number.isFinite(dur) || dur <= 0) return
+      setNearEnd(cur / dur >= NEXT_EPISODE_THRESHOLD)
+    }
+    p.on('timeupdate', check)
+    p.on('seeked', check)
+    return () => {
+      p.off('timeupdate', check)
+      p.off('seeked', check)
+    }
+  }, [playerInstance])
+
+  function playNextEpisode(): void {
+    if (!nextEpisode) return
+    const q = new URLSearchParams({
+      path: nextEpisode.path,
+      size: String(nextEpisode.size),
+      title: nextEpisode.name,
+      animeTitle
+    })
+    if (poster) q.set('poster', poster)
+    navigate(`/player/${encodeURIComponent(serverId)}?${q.toString()}`, { replace: true })
+  }
+
   const codecSummary = probe
     ? [
         probe.videoCodec ? `video: ${probe.videoCodec}` : null,
@@ -757,6 +845,16 @@ export default function PlayerPage(): JSX.Element {
           />
           <SubtitleOverlay player={playerInstance} />
           {(!subtitlesLoaded || buffering) && <div className="loading-bar overlay" />}
+          {nearEnd && nextEpisode && (
+            <button
+              type="button"
+              className="next-episode-button"
+              onClick={playNextEpisode}
+              title={nextEpisode.name}
+            >
+              Next Episode →
+            </button>
+          )}
         </div>
       )}
     </div>

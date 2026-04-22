@@ -219,19 +219,6 @@ export default function Library(): JSX.Element {
     return list
   }, [entriesById, sortKey, sortDir, latestWatchedByEntry])
 
-  const { availableGenres, availableTags } = useMemo(() => {
-    const genres = new Set<string>()
-    const tags = new Set<string>()
-    for (const e of Object.values(entriesById)) {
-      for (const g of e.metadata?.genres ?? []) genres.add(g)
-      for (const t of e.metadata?.tags ?? []) tags.add(t)
-    }
-    return {
-      availableGenres: Array.from(genres).sort((a, b) => a.localeCompare(b)),
-      availableTags: Array.from(tags).sort((a, b) => a.localeCompare(b))
-    }
-  }, [entriesById])
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     const hasQuery = q.length > 0
@@ -254,6 +241,22 @@ export default function Library(): JSX.Element {
       return true
     })
   }, [entries, query, selectedGenres, selectedTags])
+
+  const { availableGenres, availableTags } = useMemo(() => {
+    const genres = new Set<string>()
+    const tags = new Set<string>()
+    for (const e of filtered) {
+      for (const g of e.metadata?.genres ?? []) genres.add(g)
+      for (const t of e.metadata?.tags ?? []) tags.add(t)
+    }
+    // Keep currently selected values visible so they can still be removed.
+    for (const g of selectedGenres) genres.add(g)
+    for (const t of selectedTags) tags.add(t)
+    return {
+      availableGenres: Array.from(genres).sort((a, b) => a.localeCompare(b)),
+      availableTags: Array.from(tags).sort((a, b) => a.localeCompare(b))
+    }
+  }, [filtered, selectedGenres, selectedTags])
 
   function toggleGenre(genre: string): void {
     setSelectedGenres((prev) =>

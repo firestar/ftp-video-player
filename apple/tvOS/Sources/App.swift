@@ -19,6 +19,8 @@ final class AppModel: ObservableObject {
     @Published var credentials: CredentialStore.Credentials?
     @Published var store: LibraryStore?
 
+    nonisolated init() {}
+
     func bootstrap() async {
         self.credentials = CredentialStore.load()
         if let credentials {

@@ -20,11 +20,18 @@ struct FtpAnimePlayerApp: App {
 
 /// Top-level app state. Holds the `LibraryStore` and the credentials the
 /// user configured; rebuilds the `ApiClient` whenever credentials change.
+///
+/// `@MainActor` on the class makes async work on stored properties safe,
+/// but the `init()` is marked `nonisolated` so SwiftUI can evaluate the
+/// `@StateObject` default value from its property-wrapper autoclosure
+/// without a strict-concurrency error.
 @MainActor
 final class AppModel: ObservableObject {
 
     @Published var credentials: CredentialStore.Credentials?
     @Published var store: LibraryStore?
+
+    nonisolated init() {}
 
     func bootstrap() async {
         self.credentials = CredentialStore.load()

@@ -110,7 +110,3 @@ struct AnimeDetailView: View {
         return fmt.string(fromByteCount: size)
     }
 }
-
-extension VideoFile: Identifiable {
-    public var id: String { path }
-}

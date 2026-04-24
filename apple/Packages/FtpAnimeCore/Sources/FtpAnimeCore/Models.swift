@@ -61,13 +61,17 @@ public struct RemoteEntry: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct VideoFile: Codable, Equatable, Hashable, Sendable {
+public struct VideoFile: Codable, Identifiable, Equatable, Hashable, Sendable {
     public var name: String
     public var path: String
     public var size: Int64
     public var modifiedAt: Int64?
     public var thumbnailPath: String?
     public var durationSeconds: Double?
+
+    /// Computed — the remote path uniquely identifies a video in a library.
+    /// Defined as computed so Codable synthesis still ignores it on the wire.
+    public var id: String { path }
 
     public init(name: String, path: String, size: Int64, modifiedAt: Int64? = nil,
                 thumbnailPath: String? = nil, durationSeconds: Double? = nil) {

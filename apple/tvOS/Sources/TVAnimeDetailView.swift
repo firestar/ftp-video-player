@@ -75,7 +75,3 @@ struct TVAnimeDetailView: View {
         }
     }
 }
-
-extension VideoFile: Identifiable {
-    public var id: String { path }
-}

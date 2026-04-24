@@ -17,6 +17,10 @@ on:
       - ".github/workflows/apple.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   test-core:
     name: Test FtpAnimeCore package
@@ -36,19 +40,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
-        run: brew install xcodegen
+        working-directory: apple/iOS
+        run: |
+          set -o pipefail
+          brew install xcodegen 2>&1 | tee install.log
       - name: Generate xcodeproj
         working-directory: apple/iOS
         run: |
-          xcodegen generate --quiet
-          ls -la
+          set -o pipefail
+          xcodegen generate 2>&1 | tee xcodegen.log
+          ls -la 2>&1 | tee -a xcodegen.log
       - name: List schemes
         working-directory: apple/iOS
-        run: xcodebuild -project FtpAnimePlayer-iOS.xcodeproj -list
+        run: |
+          set -o pipefail
+          xcodebuild -project FtpAnimePlayer-iOS.xcodeproj -list 2>&1 | tee list.log
       - name: Build for simulator
-        id: build
         working-directory: apple/iOS
         run: |
+          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-iOS.xcodeproj \
             -scheme FtpAnimePlayer-iOS \
@@ -58,27 +68,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
-            build > build.log 2>&1
-          status=$?
-          if [ $status -ne 0 ]; then
-            echo "::group::xcodebuild failure output"
-            cat build.log
-            echo "::endgroup::"
-          fi
-          exit $status
-      - name: Post build log on failure
+            build 2>&1 | tee build.log
+      - name: Post logs on failure
         if: failure() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const log = fs.readFileSync('apple/iOS/build.log', 'utf8');
-            const tail = log.split('\n').slice(-150).join('\n');
+            const files = ['install.log', 'xcodegen.log', 'list.log', 'build.log'];
+            let body = '### iOS build failure\n';
+            for (const f of files) {
+              const p = `apple/iOS/${f}`;
+              let content = '(step did not run)';
+              try {
+                content = fs.readFileSync(p, 'utf8');
+                const lines = content.split('\n');
+                if (lines.length > 200) content = '...\n' + lines.slice(-200).join('\n');
+              } catch (_) {}
+              body += `\n<details><summary><code>${f}</code></summary>\n\n\`\`\`\n${content}\n\`\`\`\n</details>\n`;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `### iOS build failure — last 150 lines of xcodebuild output\n\n\`\`\`\n${tail}\n\`\`\``
+              body
             });
       - name: Upload iOS .app bundle
         if: success()
@@ -95,19 +108,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
-        run: brew install xcodegen
+        working-directory: apple/tvOS
+        run: |
+          set -o pipefail
+          brew install xcodegen 2>&1 | tee install.log
       - name: Generate xcodeproj
         working-directory: apple/tvOS
         run: |
-          xcodegen generate --quiet
-          ls -la
+          set -o pipefail
+          xcodegen generate 2>&1 | tee xcodegen.log
+          ls -la 2>&1 | tee -a xcodegen.log
       - name: List schemes
         working-directory: apple/tvOS
-        run: xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj -list
+        run: |
+          set -o pipefail
+          xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj -list 2>&1 | tee list.log
       - name: Build for simulator
-        id: build
         working-directory: apple/tvOS
         run: |
+          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-tvOS.xcodeproj \
             -scheme FtpAnimePlayer-tvOS \
@@ -117,27 +136,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
-            build > build.log 2>&1
-          status=$?
-          if [ $status -ne 0 ]; then
-            echo "::group::xcodebuild failure output"
-            cat build.log
-            echo "::endgroup::"
-          fi
-          exit $status
-      - name: Post build log on failure
+            build 2>&1 | tee build.log
+      - name: Post logs on failure
         if: failure() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const log = fs.readFileSync('apple/tvOS/build.log', 'utf8');
-            const tail = log.split('\n').slice(-150).join('\n');
+            const files = ['install.log', 'xcodegen.log', 'list.log', 'build.log'];
+            let body = '### tvOS build failure\n';
+            for (const f of files) {
+              const p = `apple/tvOS/${f}`;
+              let content = '(step did not run)';
+              try {
+                content = fs.readFileSync(p, 'utf8');
+                const lines = content.split('\n');
+                if (lines.length > 200) content = '...\n' + lines.slice(-200).join('\n');
+              } catch (_) {}
+              body += `\n<details><summary><code>${f}</code></summary>\n\n\`\`\`\n${content}\n\`\`\`\n</details>\n`;
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `### tvOS build failure — last 150 lines of xcodebuild output\n\n\`\`\`\n${tail}\n\`\`\``
+              body
             });
       - name: Upload tvOS .app bundle
         if: success()

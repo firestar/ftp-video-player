@@ -12,12 +12,8 @@ targets:
   FtpAnimePlayer-tvOS:
     type: application
     platform: tvOS
-    deploymentTarget: "16.0"
     sources:
       - path: Sources
-    resources:
-      - path: Resources
-        optional: true
     info:
       path: Info.plist
       properties:
@@ -30,4 +26,3 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.tvOS
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        SWIFT_VERSION: "5.9"

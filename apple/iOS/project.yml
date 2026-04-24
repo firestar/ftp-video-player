@@ -12,19 +12,13 @@ targets:
   FtpAnimePlayer-iOS:
     type: application
     platform: iOS
-    # Universal app — one binary, iPhone + iPad layouts driven off size classes.
-    supportedDestinations: [iPhone, iPad]
-    deploymentTarget: "16.0"
+    # Universal app. `TARGETED_DEVICE_FAMILY = 1,2` builds a single binary
+    # that the App Store delivers to iPhone (1) and iPad (2).
     sources:
       - path: Sources
-    resources:
-      - path: Resources
-        optional: true
     info:
       path: Info.plist
       properties:
-        UILaunchScreen:
-          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -34,9 +28,9 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # The app talks to a user-hosted Spring Boot backend, which may be
-        # plain HTTP on the LAN. Allow arbitrary loads so the AVPlayer can
-        # fetch HLS over local HTTP; users with TLS can still point at https.
+        # The app talks to a user-hosted Spring Boot backend which may be
+        # plain HTTP on the LAN. Allow arbitrary loads so AVPlayer can fetch
+        # HLS over local HTTP; users with TLS can still point at https.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     dependencies:
@@ -47,4 +41,3 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.iOS
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        SWIFT_VERSION: "5.9"

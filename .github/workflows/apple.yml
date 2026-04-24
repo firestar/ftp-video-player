@@ -1,48 +1,88 @@
-name: apple
+name: Build Apple apps
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - "v*"
     paths:
       - "apple/**"
       - ".github/workflows/apple.yml"
   pull_request:
+    branches:
+      - main
     paths:
       - "apple/**"
       - ".github/workflows/apple.yml"
+  workflow_dispatch:
 
 jobs:
-  build:
+  test-core:
+    name: Test FtpAnimeCore package
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Show Xcode version
         run: xcodebuild -version
-      - name: Install XcodeGen
-        run: brew install xcodegen
-      - name: Test FtpAnimeCore package
+      - name: swift test
         working-directory: apple/Packages/FtpAnimeCore
         run: swift test
-      - name: Generate iOS xcodeproj
+
+  build-ios:
+    name: Build iOS/iPadOS app
+    runs-on: macos-14
+    needs: test-core
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate xcodeproj
         working-directory: apple/iOS
         run: xcodegen generate
-      - name: Build iOS app
+      - name: Build for simulator
         working-directory: apple/iOS
         run: |
-          xcodebuild -project FtpAnimePlayer-iOS.xcodeproj \
-                     -scheme FtpAnimePlayer-iOS \
-                     -destination 'generic/platform=iOS Simulator' \
-                     -configuration Debug \
-                     CODE_SIGNING_ALLOWED=NO \
-                     build
-      - name: Generate tvOS xcodeproj
+          xcodebuild \
+            -project FtpAnimePlayer-iOS.xcodeproj \
+            -scheme FtpAnimePlayer-iOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Upload iOS .app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftp-anime-player-ios-app
+          path: apple/iOS/build/Build/Products/Debug-iphonesimulator/*.app
+          if-no-files-found: error
+
+  build-tvos:
+    name: Build tvOS app
+    runs-on: macos-14
+    needs: test-core
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate xcodeproj
         working-directory: apple/tvOS
         run: xcodegen generate
-      - name: Build tvOS app
+      - name: Build for simulator
         working-directory: apple/tvOS
         run: |
-          xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj \
-                     -scheme FtpAnimePlayer-tvOS \
-                     -destination 'generic/platform=tvOS Simulator' \
-                     -configuration Debug \
-                     CODE_SIGNING_ALLOWED=NO \
-                     build
+          xcodebuild \
+            -project FtpAnimePlayer-tvOS.xcodeproj \
+            -scheme FtpAnimePlayer-tvOS \
+            -destination 'generic/platform=tvOS Simulator' \
+            -configuration Debug \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Upload tvOS .app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ftp-anime-player-tvos-app
+          path: apple/tvOS/build/Build/Products/Debug-appletvsimulator/*.app
+          if-no-files-found: error

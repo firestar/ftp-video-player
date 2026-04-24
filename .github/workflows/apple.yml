@@ -46,6 +46,7 @@ jobs:
         working-directory: apple/iOS
         run: xcodebuild -project FtpAnimePlayer-iOS.xcodeproj -list
       - name: Build for simulator
+        id: build
         working-directory: apple/iOS
         run: |
           xcodebuild \
@@ -63,13 +64,22 @@ jobs:
             echo "::group::xcodebuild failure output"
             cat build.log
             echo "::endgroup::"
-            # Surface the last 30 log lines as an error annotation so the
-            # check-run annotations API shows the actual diagnostic.
-            tail -30 build.log | while IFS= read -r line; do
-              echo "::error::$line"
-            done
           fi
           exit $status
+      - name: Post build log on failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('apple/iOS/build.log', 'utf8');
+            const tail = log.split('\n').slice(-150).join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### iOS build failure — last 150 lines of xcodebuild output\n\n\`\`\`\n${tail}\n\`\`\``
+            });
       - name: Upload iOS .app bundle
         if: success()
         uses: actions/upload-artifact@v4
@@ -95,6 +105,7 @@ jobs:
         working-directory: apple/tvOS
         run: xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj -list
       - name: Build for simulator
+        id: build
         working-directory: apple/tvOS
         run: |
           xcodebuild \
@@ -112,11 +123,22 @@ jobs:
             echo "::group::xcodebuild failure output"
             cat build.log
             echo "::endgroup::"
-            tail -30 build.log | while IFS= read -r line; do
-              echo "::error::$line"
-            done
           fi
           exit $status
+      - name: Post build log on failure
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('apple/tvOS/build.log', 'utf8');
+            const tail = log.split('\n').slice(-150).join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `### tvOS build failure — last 150 lines of xcodebuild output\n\n\`\`\`\n${tail}\n\`\`\``
+            });
       - name: Upload tvOS .app bundle
         if: success()
         uses: actions/upload-artifact@v4

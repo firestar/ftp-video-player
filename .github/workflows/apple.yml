@@ -48,7 +48,6 @@ jobs:
       - name: Build for simulator
         working-directory: apple/iOS
         run: |
-          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-iOS.xcodeproj \
             -scheme FtpAnimePlayer-iOS \
@@ -58,7 +57,19 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
-            build 2>&1 | tail -120
+            build > build.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::group::xcodebuild failure output"
+            cat build.log
+            echo "::endgroup::"
+            # Surface the last 30 log lines as an error annotation so the
+            # check-run annotations API shows the actual diagnostic.
+            tail -30 build.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $status
       - name: Upload iOS .app bundle
         if: success()
         uses: actions/upload-artifact@v4
@@ -86,7 +97,6 @@ jobs:
       - name: Build for simulator
         working-directory: apple/tvOS
         run: |
-          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-tvOS.xcodeproj \
             -scheme FtpAnimePlayer-tvOS \
@@ -96,7 +106,17 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
-            build 2>&1 | tail -120
+            build > build.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::group::xcodebuild failure output"
+            cat build.log
+            echo "::endgroup::"
+            tail -30 build.log | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit $status
       - name: Upload tvOS .app bundle
         if: success()
         uses: actions/upload-artifact@v4

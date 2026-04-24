@@ -69,7 +69,7 @@ struct AnimeDetailView: View {
                     playingVideo = video
                 } label: {
                     HStack {
-                        Image(systemName: "play.rectangle.fill").foregroundStyle(.accent)
+                        Image(systemName: "play.rectangle.fill").foregroundStyle(Color.accentColor)
                         VStack(alignment: .leading) {
                             Text(video.name).lineLimit(1)
                             Text(format(size: video.size))

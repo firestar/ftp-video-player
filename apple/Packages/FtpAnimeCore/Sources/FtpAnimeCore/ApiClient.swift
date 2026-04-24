@@ -196,7 +196,7 @@ public actor ApiClient {
         catch { throw ApiError.decode(error) }
     }
 
-    private func request(method: String, path: String, query: [String: String] = [:], body: Encodable? = nil) async throws -> Data {
+    private func request(method: String, path: String, query: [String: String] = [:], body: (any Encodable)? = nil) async throws -> Data {
         guard var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false) else {
             throw ApiError.transport(URLError(.badURL))
         }
@@ -239,9 +239,9 @@ public actor ApiClient {
 /// Erases a concrete `Encodable` so the generic `request` signature stays
 /// simple; Swift doesn't allow `any Encodable` in all the places we'd want.
 private struct AnyEncodable: Encodable {
-    let wrapped: Encodable
+    let wrapped: any Encodable
 
-    init(_ wrapped: Encodable) { self.wrapped = wrapped }
+    init(_ wrapped: any Encodable) { self.wrapped = wrapped }
 
     func encode(to encoder: Encoder) throws {
         try wrapped.encode(to: encoder)

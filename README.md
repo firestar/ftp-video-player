@@ -1,9 +1,26 @@
 # FTP Anime Player
 
-A Mac desktop app that browses anime collections stored on FTP / FTPS / SFTP
-servers, enriches each folder with metadata from MyAnimeList, and plays the
-videos directly from the remote server. Thumbnails are generated on demand with
-`ffmpeg`.
+A self-hosted anime video player that browses FTP/FTPS/SFTP libraries,
+enriches folders with MyAnimeList metadata, and streams playback — available
+on **macOS, iOS, iPadOS, tvOS, Android, and Android TV**. All clients share
+the same Spring Boot backend, which owns the FTP connections and ffmpeg
+transcoder so the mobile/TV clients never need to touch FTP or bundle ffmpeg.
+
+## Platforms
+
+| Platform                | Location                                | Tech                                          |
+| ----------------------- | --------------------------------------- | --------------------------------------------- |
+| macOS (desktop)         | [`src/`](src/)                          | Electron 30 + React 18 + Video.js             |
+| Backend                 | [`server/`](server/)                    | Spring Boot 3 + ffmpeg + SQLite               |
+| iOS / iPadOS            | [`apple/iOS/`](apple/iOS/)              | SwiftUI + AVPlayer (universal app)            |
+| tvOS (Apple TV)         | [`apple/tvOS/`](apple/tvOS/)            | SwiftUI + AVPlayer                            |
+| Android phone / tablet  | [`android/mobile/`](android/mobile/)    | Jetpack Compose + Media3 (ExoPlayer)          |
+| Android TV              | [`android/tv/`](android/tv/)            | Compose-for-TV + Media3                       |
+
+The shared API contract lives in [`src/shared/types.ts`](src/shared/types.ts)
+and is mirrored in the server Java DTOs (`server/.../domain/`), the Apple
+Swift models (`apple/Packages/FtpAnimeCore/Sources/FtpAnimeCore/Models.swift`),
+and the Android Kotlin models (`android/core/src/main/kotlin/.../api/Models.kt`).
 
 ## Features
 

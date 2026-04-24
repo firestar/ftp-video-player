@@ -10,3 +10,22 @@ dist
 *.tsbuildinfo
 playwright-report
 test-results
+
+# Spring Boot server build artifacts
+server/target/
+server/data/
+
+# Apple / Xcode
+apple/**/*.xcodeproj
+apple/**/*.xcworkspace
+apple/**/DerivedData/
+apple/**/xcuserdata/
+apple/**/.build/
+apple/**/.swiftpm/
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/**/.cxx/
+android/local.properties
+android/captures/

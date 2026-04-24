@@ -18,7 +18,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
 @Configuration
-@EnableConfigurationProperties(SyncProperties.class)
+@EnableConfigurationProperties({ SyncProperties.class, PlayerProperties.class })
 public class SecurityConfig {
 
     @Bean

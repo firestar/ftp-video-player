@@ -1,0 +1,33 @@
+# XcodeGen spec for the Apple TV app. Run `xcodegen generate` here to
+# produce FtpAnimePlayer-tvOS.xcodeproj.
+name: FtpAnimePlayer-tvOS
+options:
+  bundleIdPrefix: com.ftpanimeplayer
+  deploymentTarget:
+    tvOS: "16.0"
+packages:
+  FtpAnimeCore:
+    path: ../Packages/FtpAnimeCore
+targets:
+  FtpAnimePlayer-tvOS:
+    type: application
+    platform: tvOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: Sources
+    resources:
+      - path: Resources
+        optional: true
+    info:
+      path: Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    dependencies:
+      - package: FtpAnimeCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.tvOS
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"

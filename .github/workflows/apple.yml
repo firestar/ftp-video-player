@@ -1,0 +1,48 @@
+name: apple
+
+on:
+  push:
+    paths:
+      - "apple/**"
+      - ".github/workflows/apple.yml"
+  pull_request:
+    paths:
+      - "apple/**"
+      - ".github/workflows/apple.yml"
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Test FtpAnimeCore package
+        working-directory: apple/Packages/FtpAnimeCore
+        run: swift test
+      - name: Generate iOS xcodeproj
+        working-directory: apple/iOS
+        run: xcodegen generate
+      - name: Build iOS app
+        working-directory: apple/iOS
+        run: |
+          xcodebuild -project FtpAnimePlayer-iOS.xcodeproj \
+                     -scheme FtpAnimePlayer-iOS \
+                     -destination 'generic/platform=iOS Simulator' \
+                     -configuration Debug \
+                     CODE_SIGNING_ALLOWED=NO \
+                     build
+      - name: Generate tvOS xcodeproj
+        working-directory: apple/tvOS
+        run: xcodegen generate
+      - name: Build tvOS app
+        working-directory: apple/tvOS
+        run: |
+          xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj \
+                     -scheme FtpAnimePlayer-tvOS \
+                     -destination 'generic/platform=tvOS Simulator' \
+                     -configuration Debug \
+                     CODE_SIGNING_ALLOWED=NO \
+                     build

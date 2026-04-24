@@ -39,10 +39,16 @@ jobs:
         run: brew install xcodegen
       - name: Generate xcodeproj
         working-directory: apple/iOS
-        run: xcodegen generate
+        run: |
+          xcodegen generate --quiet
+          ls -la
+      - name: List schemes
+        working-directory: apple/iOS
+        run: xcodebuild -project FtpAnimePlayer-iOS.xcodeproj -list
       - name: Build for simulator
         working-directory: apple/iOS
         run: |
+          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-iOS.xcodeproj \
             -scheme FtpAnimePlayer-iOS \
@@ -50,8 +56,11 @@ jobs:
             -configuration Debug \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build 2>&1 | tail -120
       - name: Upload iOS .app bundle
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ftp-anime-player-ios-app
@@ -68,10 +77,16 @@ jobs:
         run: brew install xcodegen
       - name: Generate xcodeproj
         working-directory: apple/tvOS
-        run: xcodegen generate
+        run: |
+          xcodegen generate --quiet
+          ls -la
+      - name: List schemes
+        working-directory: apple/tvOS
+        run: xcodebuild -project FtpAnimePlayer-tvOS.xcodeproj -list
       - name: Build for simulator
         working-directory: apple/tvOS
         run: |
+          set -o pipefail
           xcodebuild \
             -project FtpAnimePlayer-tvOS.xcodeproj \
             -scheme FtpAnimePlayer-tvOS \
@@ -79,8 +94,11 @@ jobs:
             -configuration Debug \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build 2>&1 | tail -120
       - name: Upload tvOS .app bundle
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ftp-anime-player-tvos-app

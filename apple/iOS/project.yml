@@ -1,5 +1,3 @@
-# Minimal XcodeGen spec for the iOS/iPadOS app. Run `xcodegen generate` to
-# produce FtpAnimePlayer-iOS.xcodeproj.
 name: FtpAnimePlayer-iOS
 options:
   bundleIdPrefix: com.ftpanimeplayer
@@ -11,13 +9,15 @@ targets:
     platform: iOS
     sources:
       - path: Sources
-    # No `info.path` — let Xcode auto-generate Info.plist via
-    # GENERATE_INFOPLIST_FILE (the Xcode 13+ default for apps).
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1,2"
         PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.iOS
+        PRODUCT_NAME: FtpAnimePlayer
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_FILE: Info.plist
+        # Xcode 14+ defaults GENERATE_INFOPLIST_FILE to YES for application
+        # targets. Explicitly disable it so Xcode uses the hand-written
+        # Info.plist above rather than auto-generating a second one.
+        GENERATE_INFOPLIST_FILE: "NO"

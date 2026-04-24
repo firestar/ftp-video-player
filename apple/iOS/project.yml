@@ -5,9 +5,6 @@ options:
   bundleIdPrefix: com.ftpanimeplayer
   deploymentTarget:
     iOS: "16.0"
-packages:
-  FtpAnimeCore:
-    path: ../Packages/FtpAnimeCore
 targets:
   FtpAnimePlayer-iOS:
     type: application
@@ -28,13 +25,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # The app talks to a user-hosted Spring Boot backend which may be
-        # plain HTTP on the LAN. Allow arbitrary loads so AVPlayer can fetch
-        # HLS over local HTTP; users with TLS can still point at https.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-    dependencies:
-      - package: FtpAnimeCore
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1,2"

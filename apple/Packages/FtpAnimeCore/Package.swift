@@ -14,7 +14,12 @@ let package = Package(
     name: "FtpAnimeCore",
     platforms: [
         .iOS(.v16),
-        .tvOS(.v16)
+        .tvOS(.v16),
+        // `swift test` runs the test target as a native macOS binary, so the
+        // package must also declare a macOS deployment target recent enough
+        // for the modern APIs used here (URLSession.data(for:), @MainActor,
+        // async/await, Keychain). macOS 13 clears all of those.
+        .macOS(.v13)
     ],
     products: [
         .library(name: "FtpAnimeCore", targets: ["FtpAnimeCore"])

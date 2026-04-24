@@ -27,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -90,12 +89,10 @@ fun AnimeDetailScreen(
             }
             items(current.videos) { video ->
                 Card(
+                    onClick = { onPlay(current, video) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
-                        .pointerInput(video.path) {
-                            detectTapUnit(onTap = { onPlay(current, video) })
-                        }
                 ) {
                     Column(Modifier.padding(12.dp)) {
                         Text(video.name, style = MaterialTheme.typography.bodyLarge)
@@ -105,9 +102,4 @@ fun AnimeDetailScreen(
             }
         }
     }
-}
-
-/** Tiny helper that consumes `detectTapGestures` without introducing a direct dep. */
-private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.detectTapUnit(onTap: () -> Unit) {
-    androidx.compose.foundation.gestures.detectTapGestures(onTap = { onTap() })
 }

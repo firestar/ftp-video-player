@@ -9,28 +9,39 @@ server:
 
 spring:
   application:
-    name: ftp-anime-player-sync
+    name: ftp-anime-player-server
   servlet:
     multipart:
       max-file-size: 2GB
       max-request-size: 2GB
   main:
     banner-mode: off
+    web-application-type: servlet
 
 sync:
-  # Root on-disk directory used for per-user data. Each configured user gets
-  # their own sub-tree: <data-dir>/<username>/db/ftp-anime-player.db and
-  # <data-dir>/<username>/cache/{posters,thumbnails}/*.
   data-dir: ${SYNC_DATA_DIR:./data}
-  # Users whose credentials the client can authenticate with via HTTP Basic.
-  # Passwords can be either plain text (auto-encoded on first load) or bcrypt
-  # hashes prefixed with `{bcrypt}`. Override via SYNC_USERS env var using the
-  # format `user1:pass1,user2:pass2` or by pointing at an alternate config.
   users:
     - username: admin
       password: changeme
+
+# New backend settings — govern FTP proxying, HLS transcoding, and Jikan lookups
+# used by the mobile / TV / desktop clients.
+player:
+  # Absolute paths to ffmpeg / ffprobe. Use the ones on PATH by default.
+  ffmpeg-path: ${PLAYER_FFMPEG:ffmpeg}
+  ffprobe-path: ${PLAYER_FFPROBE:ffprobe}
+  # Working directory for transient HLS segments. Wiped on startup + when
+  # streams are unregistered. Keep on fast local storage.
+  transcode-dir: ${PLAYER_TRANSCODE_DIR:./data/transcode}
+  # Jikan v4 base URL. The hosted service at api.jikan.moe is rate-limited to
+  # ~3 req/s; self-hosting replaces this with a LAN mirror.
+  jikan-base-url: ${PLAYER_JIKAN_URL:https://api.jikan.moe/v4}
+  # Maximum simultaneous HLS transcode sessions. Each spawns one ffmpeg
+  # process; on a laptop-class server you'll want this low.
+  max-concurrent-transcodes: ${PLAYER_MAX_TRANSCODES:2}
 
 logging:
   level:
     root: INFO
     org.springframework.security: INFO
+    com.ftpanimeplayer: INFO

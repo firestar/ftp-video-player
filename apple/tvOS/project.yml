@@ -1,0 +1,19 @@
+name: FtpAnimePlayer-tvOS
+options:
+  bundleIdPrefix: com.ftpanimeplayer
+  deploymentTarget:
+    tvOS: "16.0"
+targets:
+  FtpAnimePlayer-tvOS:
+    type: application
+    platform: tvOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.tvOS
+        PRODUCT_NAME: FtpAnimePlayer
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"

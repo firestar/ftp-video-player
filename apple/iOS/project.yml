@@ -1,0 +1,23 @@
+name: FtpAnimePlayer-iOS
+options:
+  bundleIdPrefix: com.ftpanimeplayer
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  FtpAnimePlayer-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    settings:
+      base:
+        TARGETED_DEVICE_FAMILY: "1,2"
+        PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.iOS
+        PRODUCT_NAME: FtpAnimePlayer
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        INFOPLIST_FILE: Info.plist
+        # Xcode 14+ defaults GENERATE_INFOPLIST_FILE to YES for application
+        # targets. Explicitly disable it so Xcode uses the hand-written
+        # Info.plist above rather than auto-generating a second one.
+        GENERATE_INFOPLIST_FILE: "NO"

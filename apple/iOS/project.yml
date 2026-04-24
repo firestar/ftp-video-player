@@ -1,5 +1,5 @@
-# XcodeGen spec for the iOS/iPadOS app target. Run `xcodegen generate` from
-# this directory to produce FtpAnimePlayer-iOS.xcodeproj.
+# Minimal XcodeGen spec for the iOS/iPadOS app. Run `xcodegen generate` to
+# produce FtpAnimePlayer-iOS.xcodeproj.
 name: FtpAnimePlayer-iOS
 options:
   bundleIdPrefix: com.ftpanimeplayer
@@ -9,32 +9,15 @@ targets:
   FtpAnimePlayer-iOS:
     type: application
     platform: iOS
-    # Universal app. `TARGETED_DEVICE_FAMILY = 1,2` builds a single binary
-    # that the App Store delivers to iPhone (1) and iPad (2).
     sources:
       - path: Sources
-    info:
-      path: Info.plist
-      properties:
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        UISupportedInterfaceOrientations~ipad:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationPortraitUpsideDown
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
-        NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+    # No `info.path` — let Xcode auto-generate Info.plist via
+    # GENERATE_INFOPLIST_FILE (the Xcode 13+ default for apps).
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1,2"
         PRODUCT_BUNDLE_IDENTIFIER: com.ftpanimeplayer.iOS
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
-        SWIFT_VERSION: "5.9"
-        # Keep Swift 5 mode (no strict concurrency) so existing sync warnings
-        # around @MainActor default values, etc. do not get promoted to errors.
-        SWIFT_STRICT_CONCURRENCY: "minimal"
-        SWIFT_TREAT_WARNINGS_AS_ERRORS: "NO"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"

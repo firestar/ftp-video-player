@@ -19,7 +19,7 @@
     "test:e2e:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "basic-ftp": "^5.0.5",
+    "basic-ftp": "^5.3.1",
     "better-sqlite3": "^11.10.0",
     "ffmpeg-static": "^5.2.0",
     "ffprobe-static": "^3.1.0",

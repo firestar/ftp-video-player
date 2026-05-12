@@ -1,0 +1,69 @@
+version: 1
+
+# FTP Anime Player — Spring Boot 3 sync server.
+#
+# The desktop app (Electron, this repo's root) authenticates with HTTP
+# Basic and POSTs its SQLite library DB + poster/thumbnail JPEGs here
+# so they roam between machines. This kaiad.yaml describes how the
+# server (under ./server) is built and deployed; the desktop app is a
+# local build, not managed by Kaiad.
+#
+# IMPORTANT — ephemeral storage. The server writes per-user data to
+# `./data` inside the container. That directory is NOT persisted across
+# restarts in this deployment, so:
+#   - the desktop client must re-sync its state after any redeploy
+#   - this is unsuitable for production use without a real persistence
+#     layer (Postgres for the SQLite tables + S3 for the cache JPEGs)
+
+# ─── Build ──────────────────────────────────────────────────────────────
+# Maven build inside the build container. Produces a Spring Boot fat
+# JAR (`server/target/sync-server-<version>.jar`) and copies it into
+# /artifacts for the runtime stage.
+build:
+  image: maven:3.9-eclipse-temurin-17
+  steps:
+    - cd server
+    # -B: non-interactive batch output. -DskipTests: unit tests aren't
+    # part of the deployable artifact; run them in CI separately if
+    # you want them gating builds.
+    - mvn -B -DskipTests package
+    - cp target/sync-server-*.jar /artifacts/sync-server.jar
+
+artifacts:
+  - sync-server.jar
+
+# ─── Runtime ────────────────────────────────────────────────────────────
+# Eclipse Temurin JRE 17 base + the fat JAR. No JDK at runtime — the
+# Maven build above already AOT'd everything into the JAR.
+runtime:
+  image: eclipse-temurin:17-jre
+  copy:
+    - from: sync-server.jar
+      to: /app/sync-server.jar
+  # `-XX:MaxRAMPercentage=75` lets the JVM use most of the container's
+  # cgroup memory limit instead of the conservative 25% default.
+  # `-Dspring.main.banner-mode=off` matches application.yml.
+  command:
+    - java
+    - -XX:MaxRAMPercentage=75
+    - -jar
+    - /app/sync-server.jar
+
+# ─── Deployment ─────────────────────────────────────────────────────────
+ports:
+  - port: 8080
+    name: http
+
+# Add an entry like the following once you've picked a public host:
+#   domains:
+#     - host: sync.ftp-anime-player.example
+#       port: 8080
+#       protocol: https
+# (kaiad's ingress terminates TLS; the container itself speaks plain
+# HTTP on :8080.)
+domains: []
+
+# Single replica. The server stores per-user data on local disk; running
+# multiple replicas without a shared persistence layer would split
+# uploads across pods inconsistently.
+instances: 1

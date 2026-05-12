@@ -61,7 +61,10 @@ ports:
 #       protocol: https
 # (kaiad's ingress terminates TLS; the container itself speaks plain
 # HTTP on :8080.)
-domains: []
+domains: 
+  - host: sync.animecap.com
+    port: 8080
+    protocol: http
 
 # Single replica. The server stores per-user data on local disk; running
 # multiple replicas without a shared persistence layer would split
